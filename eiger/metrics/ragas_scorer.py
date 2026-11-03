@@ -109,6 +109,10 @@ _VERIFIED_VERSIONS = (
     "ragas==0.2.15 langchain-community==0.3.19 langchain-ollama==0.2.3"
 )
 
+# AnswerCorrectness weights [factual_overlap, semantic_similarity], pinned
+# here to the RAGAS 0.2.15 defaults (see module docstring).
+_ANSWER_CORRECTNESS_WEIGHTS = [0.75, 0.25]
+
 
 class _EmbedderAsLangchainEmbeddings:
     """
@@ -196,7 +200,7 @@ class RAGASFaithfulnessScorer:
             from langchain_ollama import ChatOllama
             from ragas.embeddings import LangchainEmbeddingsWrapper
             from ragas.llms import LangchainLLMWrapper
-            from ragas.metrics import AnswerCorrectness, Faithfulness
+            from ragas.metrics import AnswerCorrectness, AnswerSimilarity, Faithfulness
         except ImportError as exc:
             raise ImportError(
                 "RAGASFaithfulnessScorer requires the pinned 'ragas' extra "
@@ -237,6 +241,14 @@ class RAGASFaithfulnessScorer:
         self._faithfulness: Faithfulness = Faithfulness(llm=wrapped_llm)
         self._answer_correctness: AnswerCorrectness = AnswerCorrectness(
             llm=wrapped_llm, embeddings=wrapped_embeddings
+        )
+        # RAGAS 0.2.15 creates AnswerSimilarity only in __post_init__, and in
+        # our integration test that step did not populate it ("AnswerSimilarity
+        # must be set"). Build it explicitly, with the same embedder and fixed
+        # weights, so the scorer does not depend on library post-init behaviour.
+        self._answer_correctness.weights = list(_ANSWER_CORRECTNESS_WEIGHTS)
+        self._answer_correctness.answer_similarity = AnswerSimilarity(
+            embeddings=wrapped_embeddings
         )
 
     def __call__(self, claim: Claim, generation: GenerationResult) -> dict[str, float]:

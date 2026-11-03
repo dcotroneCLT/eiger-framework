@@ -33,7 +33,7 @@ mkdir -p requirements
 # Resolve the project's own dependency ranges (pyproject.toml), including
 # dev and data-import extras, to exact versions with SHA-256 hashes.
 pip-compile --quiet --generate-hashes --allow-unsafe --strip-extras \
-  --extra dev --extra data-import \
+  --extra dev --extra data-import --extra ragas \
   --output-file "$LOCK" pyproject.toml
 
 deactivate
@@ -44,7 +44,7 @@ if [[ "${1:-}" == "--check" ]]; then
   TMP="$(mktemp)"
   "$PY" -m venv "$TMPVENV" && source "$TMPVENV/bin/activate" \
     && python -m pip install --quiet pip-tools \
-    && pip-compile --quiet --generate-hashes --allow-unsafe --strip-extras --extra dev --extra data-import \
+    && pip-compile --quiet --generate-hashes --allow-unsafe --strip-extras --extra dev --extra data-import --extra ragas \
          --output-file "$TMP" pyproject.toml
   deactivate || true
   rm -rf "$TMPVENV"

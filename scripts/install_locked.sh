@@ -34,6 +34,8 @@ source "$VENV/bin/activate"
 
 python -m pip install --require-hashes -r "$LOCK"
 python -m pip install --no-deps -e .
+python -c "import numpy, pyarrow, sentence_transformers, torch; print('import check OK')" \
+  || { echo "ERROR: dependency import check failed. Do not run experiments."; exit 1; }
 
 echo "Installed from $LOCK into $VENV."
 echo "Activate with: source $VENV/bin/activate"
