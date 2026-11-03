@@ -44,3 +44,4 @@ data/
 # ContainerLab runtime artifacts (never commit these)
 clab-*/
 .venv-lock/
+logs/
