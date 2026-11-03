@@ -32,7 +32,6 @@ fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 
-python -m pip install --quiet --upgrade pip
 python -m pip install --require-hashes -r "$LOCK"
 python -m pip install --no-deps -e .
 
