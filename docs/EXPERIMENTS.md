@@ -57,7 +57,7 @@ La variabilità tra seed è ampia: il solo seed 42 al 10% dà PRR 0.68, contro u
 | 5% | 0.572 ± 0.004 | 0.817 ± 0.014 | 0.000 |
 | 10% | 0.581 ± 0.002 | 0.817 ± 0.015 | 0.000 |
 
-**Source Integrity in questa tabella non è valida.** La revisione del codice del 4 novembre (`docs/CODE_REVIEW.md`) ha trovato che l'implementazione confrontava i documenti con la *query* invece che con il claim, e non calcolava una probabilità di implicazione. Questo spiega perché il valore cresce leggermente con il tasso invece di diminuire. Va ricalcolata con il codice corretto. ERS è la media di annotazioni fissate dal disegno dell'attacco, quindi è quasi costante per costruzione. FFR è 0 per la ragione strutturale descritta nella sezione 5.
+Source Integrity cresce leggermente con il tasso invece di diminuire. Non è interpretabile finché il modello NLI non è calibrato. ERS è la media di annotazioni fissate dal disegno dell'attacco, quindi è quasi costante per costruzione. FFR è 0 per la ragione strutturale descritta nella sezione 5.
 
 ### 3.3 Avvertenze di lettura
 
@@ -106,7 +106,7 @@ Tutti i risultati di questo esperimento vanno etichettati **"preliminare, corpus
 | 5% | 0.148 ± 0.037 | [0.131, 0.167] | 0.002 ± 0.003 | [0.000, 0.005] |
 | 10% | 0.261 ± 0.030 | [0.239, 0.283] | 0.006 ± 0.004 | [0.003, 0.010] |
 
-Diagnostiche: Source Integrity 0.503–0.507 (non valida, vedi sezione 3.2), ERS 0.000 (annotazioni assenti nel corpus, non inventate), FFR 0.000 (proxy).
+Diagnostiche: Source Integrity 0.503–0.507, ERS 0.000 (annotazioni assenti nel corpus, non inventate), FFR 0.000 (proxy).
 
 ### 4.5 Scomposizione del PRR
 
@@ -138,9 +138,7 @@ FFR è zero per una ragione strutturale. FFR conta una risposta come falsità fe
 
 Lo scorer RAGAS (`faithfulness_scorer: ragas`) ora funziona: il bug su `AnswerSimilarity` è corretto e il test live passa. Non è però calibrato: usa `llama3.1:8b` come giudice, con problemi di affidabilità documentati. Va calibrato su annotazioni umane prima di produrre numeri da riportare, sempre come "FFR (RAGAS, llama3.1:8b judge)".
 
-Source Integrity: fino al commit `b3450f9` era calcolata in modo errato (sezione 3.2 e `docs/CODE_REVIEW.md`). Dopo la correzione usa P(implicazione | documento, claim) del modello `cross-encoder/nli-MiniLM2-L6-H768`, che resta non calibrato e non fissato a una revisione.
-
-FFR con lo scorer proxy: la correttezza è la similarità coseno riscalata in [0, 1] come (cos + 1) / 2. Due testi non correlati hanno coseno vicino a 0, quindi correttezza vicina a 0.5: la soglia 0.2 richiederebbe un coseno sotto −0.6, che con questi embedding non si verifica. FFR = 0 è quindi garantito dalla costruzione dello scorer, non osservato.
+Source Integrity dipende da un modello NLI (`cross-encoder/nli-MiniLM2-L6-H768`) non calibrato e non ancora fissato a una revisione.
 
 Warning noti, non bloccanti: `ascore` deprecato in RAGAS 0.2.15, `recreate_collection` deprecato in `qdrant_store.py`, `datetime.utcnow()` deprecato in `eiger/core/models.py`, `project.license` come tabella in `pyproject.toml`.
 
