@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# Runs all generated paper-facing sweep configs, one log per run.
+# Runs every config in a sweep directory, one log per run.
+# Usage: scripts/run_benchmark_sweep.sh [config_dir]
+#   default config_dir: experiments/poison_rate_sweep_benchmark
 # Uses this machine's venv explicitly, so it does not depend on the
 # terminal's active environment. Stops at the first failure (set -e).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+CFG_DIR="${1:-experiments/poison_rate_sweep_benchmark}"
 PY="venv-$(hostname -s)/bin/python"
 [[ -x "$PY" ]] || { echo "ERROR: $PY not found. Run scripts/install_locked.sh first."; exit 1; }
 "$PY" -c "import eiger" || { echo "ERROR: eiger not importable with $PY"; exit 1; }
-mkdir -p logs
-for f in experiments/poison_rate_sweep_benchmark/*.yaml; do
+[[ -d "$CFG_DIR" ]] || { echo "ERROR: $CFG_DIR not found."; exit 1; }
+LOG_DIR="logs/$(basename "$CFG_DIR")"
+mkdir -p "$LOG_DIR"
+for f in "$CFG_DIR"/*.yaml; do
   name=$(basename "$f" .yaml)
   echo "=== $name $(date +%H:%M:%S) ==="
-  if ! "$PY" -m eiger run "$f" > "logs/$name.log" 2>&1; then
-    echo "FAILED: $name (see logs/$name.log)"; tail -5 "logs/$name.log"; exit 1
+  if ! "$PY" -m eiger run "$f" > "$LOG_DIR/$name.log" 2>&1; then
+    echo "FAILED: $name (see $LOG_DIR/$name.log)"; tail -5 "$LOG_DIR/$name.log"; exit 1
   fi
 done
 echo "sweep completo: $(date +%H:%M:%S)"

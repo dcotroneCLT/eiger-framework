@@ -8,7 +8,7 @@ Rispetto al 29 ottobre, il risultato sul retrieval è ora sostenibile. Lo sweep 
 
 Al crescere del tasso di avvelenamento (0, 1, 3, 5, 10%), la quota di query con almeno un documento avvelenato nel top-5 (PRR) cresce in modo monotono, da 0.00 a 0.82 (IC 95% 0.79–0.86). Gli intervalli di tassi adiacenti non si sovrappongono. Il risultato è coerente con H1 (RQ1).
 
-Restano invariati due limiti: FFR non è misurabile con lo scorer proxy (vale 0.0 per costruzione, sezione 5), e il dataset è Snopes, non il corpus Mistral v3. Il primo esperimento sul corpus ufficiale in git è descritto nella sezione 4 ed è preliminare, perché il corpus non è ancora validato da revisione umana.
+Restano invariati due limiti: FFR non è misurabile con lo scorer proxy (vale 0.0 per costruzione, sezione 5), e il dataset della sezione 3 è Snopes. Il primo esperimento sul corpus ufficiale in git (sezione 4) è preliminare, perché il corpus non è ancora validato. Mostra che una manipolazione, quando presente, viene quasi sempre recuperata accanto al documento vero, ma il suo PRD@1 è falsato dalla costruzione della query.
 
 ## 2. Setup comune
 
@@ -57,7 +57,7 @@ La variabilità tra seed è ampia: il solo seed 42 al 10% dà PRR 0.68, contro u
 | 5% | 0.572 ± 0.004 | 0.817 ± 0.014 | 0.000 |
 | 10% | 0.581 ± 0.002 | 0.817 ± 0.015 | 0.000 |
 
-Source Integrity cresce leggermente con il tasso invece di diminuire. Non è interpretabile finché il modello NLI non è calibrato. ERS è la media di annotazioni fissate dal disegno dell'attacco, quindi è quasi costante per costruzione. FFR è 0 per la ragione strutturale descritta nella sezione 5.
+**Source Integrity in questa tabella non è valida.** La revisione del codice del 4 novembre (`docs/CODE_REVIEW.md`) ha trovato che l'implementazione confrontava i documenti con la *query* invece che con il claim, e non calcolava una probabilità di implicazione. Questo spiega perché il valore cresce leggermente con il tasso invece di diminuire. Va ricalcolata con il codice corretto. ERS è la media di annotazioni fissate dal disegno dell'attacco, quindi è quasi costante per costruzione. FFR è 0 per la ragione strutturale descritta nella sezione 5.
 
 ### 3.3 Avvertenze di lettura
 
@@ -94,14 +94,43 @@ I claim `verified_false` sono esclusi perché il documento ground-truth è il te
 
 Tutti i risultati di questo esperimento vanno etichettati **"preliminare, corpus non ancora validato"**, come richiede il protocollo di allineamento (punto 6). Con soli 25 claim revisionati, una versione paper-facing (`--reviewed-only`) non ha ancora una dimensione utile.
 
-### 4.4 Risultati
+### 4.4 Risultati (preliminari, corpus non ancora validato)
 
-Da compilare dopo l'esecuzione (`results/corpus_sweep_preliminary/summary.md`).
+25 run, commit `bb00c08`, 300 claim per run, 1.500 record per tasso. Media ± deviazione standard sui cinque seed; IC 95% con bootstrap sui record.
 
-### 4.5 Differenze attese rispetto a Snopes
+| Tasso | PRR | IC 95% | PRD@1 | IC 95% |
+|---|---|---|---|---|
+| 0% | 0.000 ± 0.000 | [0.000, 0.000] | 0.000 ± 0.000 | [0.000, 0.000] |
+| 1% | 0.050 ± 0.040 | [0.040, 0.061] | 0.001 ± 0.001 | [0.000, 0.002] |
+| 3% | 0.100 ± 0.068 | [0.085, 0.115] | 0.001 ± 0.002 | [0.000, 0.003] |
+| 5% | 0.148 ± 0.037 | [0.131, 0.167] | 0.002 ± 0.003 | [0.000, 0.005] |
+| 10% | 0.261 ± 0.030 | [0.239, 0.283] | 0.006 ± 0.004 | [0.003, 0.010] |
 
-- La query è il template `Is it true that <claim>?`, quasi identica sia al documento vero sia a quello manipolato. Il retrieval misura quindi la competizione tra due quasi-duplicati: ci si aspetta un PRD@1 più alto che su Snopes, dove la query è una domanda generata.
-- ERS sarà 0: le colonne di plausibilità e rischio editoriale del corpus sono ancora vuote, e non vengono inventate.
+Diagnostiche: Source Integrity 0.503–0.507 (non valida, vedi sezione 3.2), ERS 0.000 (annotazioni assenti nel corpus, non inventate), FFR 0.000 (proxy).
+
+### 4.5 Scomposizione del PRR
+
+Il PRR conta qualunque documento avvelenato nel top-5. Sui `results.json` è stato separato il caso in cui il documento avvelenato è la variante del claim interrogato da quello in cui appartiene a un altro claim.
+
+| Tasso | Documento vero del claim al rank 1 | Variante del claim nel top-5 | di cui al rank 2 | Solo varianti di altri claim |
+|---|---|---|---|---|
+| 1% | 0.999 | 0.015 | 21 su 22 | 0.035 |
+| 5% | 0.998 | 0.050 | 72 su 75 | 0.098 |
+| 10% | 0.994 | 0.096 | 135 su 144 | 0.165 |
+
+Tre osservazioni.
+
+1. **Quando un claim è avvelenato, la sua variante entra quasi sempre nel contesto.** La quota di query con la propria variante nel top-5 coincide con la quota attesa di claim avvelenati (circa 1%, 5%, 10%). Il retrieval non filtra la manipolazione.
+2. **La variante resta quasi sempre al secondo posto, dietro l'originale.** Il documento vero è al rank 1 in oltre il 99% delle query. La causa è la query: il template `Is it true that <claim>?` contiene il testo originale, quindi l'originale è quasi identico alla query. Il PRD@1 vicino a zero misura questo vantaggio, non la robustezza del retrieval. La previsione iniziale (PRD@1 più alto che su Snopes) era sbagliata.
+3. **Circa due terzi del PRR al 10% vengono da varianti di altri claim** (0.165 su 0.261). Sono documenti avvelenati di claim semanticamente vicini, che contaminano query su cui non c'è stato un attacco mirato. È un'esposizione collaterale, distinta da quella mirata.
+
+### 4.6 Perché non è confrontabile con Snopes
+
+- **Query**: generata da un LLM su Snopes, template con il testo originale qui (osservazione 2).
+- **Quota di documenti avvelenati**: una variante per claim qui; quattro attacchi indipendenti su Snopes, circa quattro volte tanti documenti avvelenati allo stesso tasso nominale.
+- **Dimensione**: 300 claim qui, 100 su Snopes.
+
+Il risultato utilizzabile di questo esperimento non è il valore di PRR, ma la scomposizione: la manipolazione viene quasi sempre recuperata insieme alla verità, e il contesto dato al modello contiene quindi una contraddizione. È lo scenario in cui misurare FFR ha più senso.
 
 ## 5. Limiti e interpretazione
 
@@ -109,7 +138,9 @@ FFR è zero per una ragione strutturale. FFR conta una risposta come falsità fe
 
 Lo scorer RAGAS (`faithfulness_scorer: ragas`) ora funziona: il bug su `AnswerSimilarity` è corretto e il test live passa. Non è però calibrato: usa `llama3.1:8b` come giudice, con problemi di affidabilità documentati. Va calibrato su annotazioni umane prima di produrre numeri da riportare, sempre come "FFR (RAGAS, llama3.1:8b judge)".
 
-Source Integrity dipende da un modello NLI (`cross-encoder/nli-MiniLM2-L6-H768`) non calibrato e non ancora fissato a una revisione.
+Source Integrity: fino al commit `b3450f9` era calcolata in modo errato (sezione 3.2 e `docs/CODE_REVIEW.md`). Dopo la correzione usa P(implicazione | documento, claim) del modello `cross-encoder/nli-MiniLM2-L6-H768`, che resta non calibrato e non fissato a una revisione.
+
+FFR con lo scorer proxy: la correttezza è la similarità coseno riscalata in [0, 1] come (cos + 1) / 2. Due testi non correlati hanno coseno vicino a 0, quindi correttezza vicina a 0.5: la soglia 0.2 richiederebbe un coseno sotto −0.6, che con questi embedding non si verifica. FFR = 0 è quindi garantito dalla costruzione dello scorer, non osservato.
 
 Warning noti, non bloccanti: `ascore` deprecato in RAGAS 0.2.15, `recreate_collection` deprecato in `qdrant_store.py`, `datetime.utcnow()` deprecato in `eiger/core/models.py`, `project.license` come tabella in `pyproject.toml`.
 
@@ -120,7 +151,7 @@ Sweep su 100 claim Snopes, un solo seed (42), sei attacchi inclusi M03 e M05, am
 ## 7. Cosa serve ancora
 
 1. Verificare la parità sull'altra macchina con `10pct_seed42`.
-2. Eseguire e riportare lo sweep preliminare sul corpus ufficiale (sezione 4).
+2. Dare al corpus ufficiale query neutre, che non contengano il testo originale né l'elemento modificato, generate una sola volta e versionate con hash; poi rieseguire la sezione 4. Aggiungere a PRR la scomposizione mirata/collaterale della sezione 4.5.
 3. Calibrare lo scorer RAGAS su annotazioni umane e misurare FFR.
 4. Completare la revisione umana del corpus, poi rieseguire la sezione 4 con `--reviewed-only`.
 5. Fissare la revisione del modello NLI e del modello di embedding (`HF_HUB_OFFLINE=1`).

@@ -470,6 +470,8 @@ class TestRunRetrievalAndGeneration:
         assert record.generation.model_name == "mock-llm"
         assert record.generation.metadata["temperature"] == runner.config.llm.temperature
         assert record.generation.metadata["max_tokens"] == runner.config.llm.max_tokens
+        # Source Integrity reads the claim text from here (review fix).
+        assert record.generation.metadata["ground_truth"] == claim.original_fact
 
     def test_one_record_per_claim(self, tmp_path: Path) -> None:
         runner, _, _, _ = _make_runner(tmp_path)

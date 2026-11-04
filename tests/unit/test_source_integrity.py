@@ -46,7 +46,24 @@ from eiger.metrics.source_integrity import SourceIntegrityMetric
 
 # ─── Test helpers ─────────────────────────────────────────────────────────────
 
-def _make_record(query: str = "What is the inflation rate?", with_hits: bool = True) -> EvaluationRecord:
+_GT = "The WHO reported that inflation rose to 3.5% in 2023."
+
+
+def _nli(entail: float) -> list[dict]:
+    """Shape returned by the text-classification pipeline with top_k=None."""
+    rest = (1.0 - entail) / 2
+    return [
+        {"label": "contradiction", "score": rest},
+        {"label": "entailment", "score": entail},
+        {"label": "neutral", "score": rest},
+    ]
+
+
+def _make_record(
+    query: str = "What is the inflation rate?",
+    with_hits: bool = True,
+    ground_truth: str | None = _GT,
+) -> EvaluationRecord:
     """
     Build a minimal EvaluationRecord for SourceIntegrityMetric tests.
 
@@ -73,6 +90,7 @@ def _make_record(query: str = "What is the inflation rate?", with_hits: bool = T
         context_docs=[doc.text],
         answer="Inflation rose to 3.5%.",
         model_name="test_model",
+        metadata={} if ground_truth is None else {"ground_truth": ground_truth},
     )
     return EvaluationRecord(
         claim_id="C1",
@@ -191,7 +209,7 @@ class TestCompute:
         metric = SourceIntegrityMetric()
         # Inject a mock pipeline so that the import check does not fail
         metric._pipeline = MagicMock()
-        record = _make_record(query="")  # empty query → no ground truth
+        record = _make_record(ground_truth=None)  # no stored ground truth
         score = metric.compute(record)
         assert score.value == 0.0
         assert "warning" in score.metadata
@@ -236,15 +254,29 @@ class TestCompute:
         """
         metric = SourceIntegrityMetric()
         # Mock the pipeline to always return 0.8 consistency score
-        mock_pipe = MagicMock()
-        mock_pipe.return_value = {
-            "labels": ["consistent", "contradictory"],
-            "scores": [0.8, 0.2],
-        }
+        mock_pipe = MagicMock(return_value=_nli(0.8))
         metric._pipeline = mock_pipe
-        record = _make_record(query="What is the inflation rate?")
+        record = _make_record()
         score = metric.compute(record)
         assert score.value == pytest.approx(0.8)
+        # Premise is the retrieved document, hypothesis is the ground truth
+        # (NOT the query), and all labels are requested.
+        mock_pipe.assert_called_once_with(
+            {"text": record.retrieval.hits[0].document.text, "text_pair": _GT}, top_k=None
+        )
+
+    def test_entailment_found_by_label_name_and_nested_output(self) -> None:
+        """Label order must not matter, and a nested [[...]] output is unwrapped."""
+        metric = SourceIntegrityMetric()
+        metric._pipeline = MagicMock(return_value=[list(reversed(_nli(0.3)))])
+        assert metric.compute(_make_record()).value == pytest.approx(0.3)
+
+    def test_model_without_entailment_label_raises(self) -> None:
+        """A non-NLI model must fail loudly instead of reporting a wrong score."""
+        metric = SourceIntegrityMetric()
+        metric._pipeline = MagicMock(return_value=[{"label": "POSITIVE", "score": 0.9}])
+        with pytest.raises(ValueError, match="no entailment label"):
+            metric.compute(_make_record())
 
     def test_compute_metadata_contains_entailment_scores(self) -> None:
         """
@@ -252,12 +284,7 @@ class TestCompute:
         in the MetricScore metadata for post-hoc analysis.
         """
         metric = SourceIntegrityMetric()
-        mock_pipe = MagicMock()
-        mock_pipe.return_value = {
-            "labels": ["consistent", "contradictory"],
-            "scores": [0.7, 0.3],
-        }
-        metric._pipeline = mock_pipe
+        metric._pipeline = MagicMock(return_value=_nli(0.7))
         record = _make_record(query="Some query")
         score = metric.compute(record)
         assert "entailment_scores" in score.metadata
@@ -278,22 +305,18 @@ class TestCompute:
 class TestGetGroundTruth:
     """Tests for the static _get_ground_truth helper."""
 
-    def test_returns_none_for_empty_query(self) -> None:
-        """
-        An empty retrieval query must map to None (no ground truth available).
+    def test_returns_none_without_stored_ground_truth(self) -> None:
+        """No stored ground truth -> None, even when a query exists."""
+        record = _make_record(query="What is the inflation rate?", ground_truth=None)
+        assert SourceIntegrityMetric._get_ground_truth(record) is None
 
-        The empty string is falsy in Python, so ``query or None`` returns None,
-        which causes compute() to short-circuit with a 0.0 score.
-        """
-        record = _make_record(query="")
-        result = SourceIntegrityMetric._get_ground_truth(record)
-        assert result is None
+    def test_returns_none_for_empty_ground_truth(self) -> None:
+        assert SourceIntegrityMetric._get_ground_truth(_make_record(ground_truth="")) is None
 
-    def test_returns_query_string_for_non_empty_query(self) -> None:
-        """A non-empty retrieval query must be returned as the ground-truth proxy."""
+    def test_returns_stored_ground_truth_not_query(self) -> None:
+        """The claim text must be used, never the retrieval query."""
         record = _make_record(query="What is the inflation rate?")
-        result = SourceIntegrityMetric._get_ground_truth(record)
-        assert result == "What is the inflation rate?"
+        assert SourceIntegrityMetric._get_ground_truth(record) == _GT
 
 
 # ─── aggregate ───────────────────────────────────────────────────────────────

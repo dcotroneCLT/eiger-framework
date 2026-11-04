@@ -125,6 +125,15 @@ class CorpusBuilder:
                 if rng.random() <= attack_cfg.poison_rate:
                     doc_seed = derive_seed(self.seed, claim.claim_id, attack.name, "apply")
                     poisoned = attack.apply(gt_doc, seed=doc_seed, **attack_cfg.params)
+                    # Bug fix (November 2026 review): attacks copy the source
+                    # document's doc_id, so a poisoned document and its ground
+                    # truth shared the same id. HybridRetriever fuses rankings
+                    # by doc_id and therefore merged the two, silently hiding
+                    # the poisoned document (PRR under-counted for hybrid).
+                    # Give every poisoned document a unique, deterministic id.
+                    poisoned = poisoned.model_copy(
+                        update={"doc_id": f"{gt_doc.doc_id}__{attack.name}"}
+                    )
                     result.poisoned_docs.append(poisoned)
 
         log.info(

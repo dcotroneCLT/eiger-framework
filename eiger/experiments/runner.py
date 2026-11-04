@@ -432,6 +432,9 @@ class ExperimentRunner:
             metadata={
                 "temperature": self.config.llm.temperature,
                 "max_tokens": self.config.llm.max_tokens,
+                # Read by SourceIntegrityMetric (and any metric comparing
+                # retrieved context against ground truth).
+                "ground_truth": claim.original_fact,
             },
         )
 
