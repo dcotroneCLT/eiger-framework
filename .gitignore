@@ -45,3 +45,5 @@ data/
 clab-*/
 .venv-lock/
 logs/
+corpus_claim_official/derived/
+review_queries_sample.xlsx
