@@ -7,7 +7,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CFG_DIR="${1:-experiments/poison_rate_sweep_benchmark}"
-PY="venv-$(hostname -s)/bin/python"
+# Prefer the active virtualenv: macOS can change `hostname -s` when the
+# network changes, which would point to a venv that does not exist.
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then PY="$VIRTUAL_ENV/bin/python"; else PY="venv-$(hostname -s)/bin/python"; fi
 [[ -x "$PY" ]] || { echo "ERROR: $PY not found. Run scripts/install_locked.sh first."; exit 1; }
 "$PY" -c "import eiger" || { echo "ERROR: eiger not importable with $PY"; exit 1; }
 [[ -d "$CFG_DIR" ]] || { echo "ERROR: $CFG_DIR not found."; exit 1; }
