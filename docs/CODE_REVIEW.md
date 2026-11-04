@@ -11,6 +11,7 @@ Stato dopo le correzioni: **803 test unitari superati, copertura 100%**. Lo stat
 | 1 | Source Integrity confronta i documenti con la query, non con il claim, e non calcola P(implicazione) | Critica | Tutti i valori di SI finora non sono validi | Corretto |
 | 2 | Documento avvelenato e ground-truth hanno lo stesso `doc_id`; il retriever ibrido li fonde e nasconde il veleno | Critica (solo ibrido) | PRR sottostimato con `retriever.type: hybrid`; nessun effetto sugli sweep densi | Corretto |
 | 3 | Il codice del corpus ufficiale e degli sweep relativi non è nel repository | Critica (provenienza) | I `results.json` del corpus ufficiale riportano un commit che non contiene il codice che li ha prodotti | Da committare |
+| 3b | Attacchi senza effetto (testo identico all'originale) contati come documenti avvelenati | Critica (Snopes) | Al 10%, seed 42: 19 documenti "avvelenati" su 38 identici all'originale; PRR e PRD di Snopes sovrastimati e PRD@1 non deterministico (parità di punteggio) | Corretto |
 | 4 | FFR = 0 garantito dalla costruzione dello scorer proxy | Alta | FFR non misura nulla con lo scorer `embedding` | Documentato |
 | 5 | FFR non è condizionato all'esposizione al veleno | Media | FFR mescola risposte con e senza contesto avvelenato | Da decidere |
 | 6 | ERS è una media condizionata ai soli record con annotazioni | Media | ERS non è confrontabile tra tassi diversi | Documentato |
@@ -18,7 +19,7 @@ Stato dopo le correzioni: **803 test unitari superati, copertura 100%**. Lo stat
 | 8 | Ollama non riceve un `seed` | Bassa | Nessuno con temperatura 0 (verificato: run identiche) | Aperto |
 | 9 | Pulizia: 10 import inutilizzati, `type: ignore` superflui, 3 tipi non coerenti in mypy | Bassa | Nessuno | Aperto |
 
-Le metriche **PRR e PRD@1 degli sweep densi sono corrette** e i loro risultati restano validi: dipendono solo da `doc_type` dei documenti recuperati, e il retriever denso indicizza i documenti per posizione, non per `doc_id`.
+Le **formule** di PRR e PRD@1 sono corrette. I risultati del corpus ufficiale restano validi; quelli di Snopes vanno rifatti per il problema 3b.
 
 ## 2. Problemi critici
 
@@ -57,6 +58,14 @@ Con `retriever.type: hybrid` il PRR veniva quindi sottostimato, e il retriever i
 Il fork al commit `b3450f9` non contiene `eiger/datasets/corpus_claim_official.py`, `eiger/attacks/corpus_precomputed.py`, i relativi test, `scripts/make_corpus_sweep.py` né le configurazioni `experiments/corpus_sweep_preliminary/`. Lo sweep sul corpus ufficiale è stato eseguito con file locali non committati. Il `results.json` registra `git_commit = bb00c08`, un commit che non contiene quel codice, e il runner non registra se l'albero di lavoro aveva modifiche.
 
 **Correzione.** Il pacchetto di questa revisione include tutti questi file. Vanno committati. Conviene anche far registrare al runner lo stato "dirty" dell'albero git, così il problema non si ripete senza essere visto (non ancora implementato).
+
+### 2.4 Attacchi senza effetto contati come veleno
+
+Alcuni attacchi meccanici restituiscono il testo originale quando non trovano nulla da cambiare (per esempio `numerical_shift` su un claim senza cifre). Il documento "avvelenato" era quindi una copia esatta della verità, ma veniva contato nel PRR e nel PRD. Nello sweep Snopes al 10% con seed 42, **19 dei 38 documenti avvelenati erano identici all'originale** (10 `numerical_shift`, 3 `date_manipulation`, 6 `missing_context`).
+
+Conseguenze: PRR e PRD di Snopes sovrastimati; e, poiché una copia identica ha lo stesso punteggio dell'originale, l'ordine tra le due nel retrieval non è garantito, il che rendeva il PRD@1 non riproducibile tra esecuzioni (differenze osservate prima e dopo la revisione). Il corpus ufficiale non è toccato: ogni sua variante differisce dall'originale.
+
+**Correzione.** `CorpusBuilder` scarta le uscite identiche al documento vero e le conta in `skipped_noop`, riportato nei log. Il tasso effettivo di manipolazione è quindi quello dei documenti realmente modificati. Test di regressione in `tests/unit/test_review_fixes.py`.
 
 ## 3. Problemi sulle metriche
 
@@ -106,7 +115,7 @@ Atteso: valore alto (> 0.8) per il claim stesso, basso per la versione con l'ann
 
 | Risultato | Da rifare? | Motivo |
 |---|---|---|
-| PRR, PRD@1 — sweep Snopes | No | Retriever denso, non toccato dai bug |
+| PRR, PRD@1 — sweep Snopes | Sì | Bug 2.4: documenti avvelenati identici all'originale |
 | PRR, PRD@1 — corpus ufficiale | Solo per provenienza | Rieseguire dopo il commit del codice, per avere un commit coerente |
 | Source Integrity — tutti | Sì | Bug 2.1 |
 | FFR — tutti | Non significativo | Proxy (3.1) |

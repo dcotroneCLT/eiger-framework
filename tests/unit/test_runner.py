@@ -304,7 +304,9 @@ class TestRunCorpusBuilding:
             attacks=[AttackConfig(name="attribution_switch", poison_rate=1.0)],
             allow_non_benchmark_attacks=True,
         )
-        runner.run([_make_claim()], save=False)
+        # The claim must mention a mapped entity, otherwise attribution_switch
+        # is a no-op and the poisoned copy is skipped by CorpusBuilder.
+        runner.run([_make_claim(text="The WHO reported inflation rose to 3.5% in 2023.")], save=False)
         args, _ = mock_vector_store.upsert.call_args
         # 1 ground-truth + 1 poisoned.
         assert len(args[1]) == 2

@@ -42,3 +42,13 @@ def test_hybrid_no_longer_hides_poisoned_documents() -> None:
     result = hybrid.retrieve("inflation 2023 report", "C1", top_k=5)
     assert len(result.hits) == 3
     assert result.contains_poisoned
+
+
+def test_noop_attacks_are_skipped_and_counted() -> None:
+    """An attack that changes nothing must not produce a 'poisoned' copy of the truth."""
+    claim = Claim(claim_id="N1", original_fact="The museum reopened after renovation.",
+                  context_query="museum reopening")
+    attacks = [(get_attack("numerical_shift"), AttackConfig(name="numerical_shift", poison_rate=1.0))]
+    result = CorpusBuilder(attacks).build([claim])
+    assert result.poisoned_docs == []
+    assert result.skipped_noop == {"numerical_shift": 1}
