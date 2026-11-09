@@ -196,19 +196,24 @@ def _h(text: str) -> str:
 
 def test_genq_uses_generated_query_and_applies_checks(corpus: Path, tmp_path: Path) -> None:
     qfile = _queries(tmp_path / "q.json", [
-        # Neutral: shares "2020" with both texts, repeats neither "3" nor "30".
-        {"item_id": "A1", "context_query": "How much did the rate rise in 2020?",
+        # Repeats "3", a number changed by the manipulation (3 -> 30): excluded.
+        {"item_id": "A1", "context_query": "Did the rate rise to 3% in 2020?",
          "original_sha256": _h("Rate rose to 3% in 2020.")},
-        # Repeats "changed", present only in the manipulated text -> leak.
+        # Repeats "changed", a WORD present only in the manipulated text:
+        # allowed by the numeric-only policy (M06-style overlap).
         {"item_id": "A2", "context_query": "Was the claim changed?",
          "original_sha256": _h("Unreviewed claim.")},
     ])
-    reviewed = CorpusClaimOfficialGenQDataset(corpus_dir=corpus, query_file=qfile).load()
-    assert [(c.claim_id, c.context_query, c.metadata["query_source"]) for c in reviewed] == [
-        ("A1", "How much did the rate rise in 2020?", "generated")
-    ]
+    assert CorpusClaimOfficialGenQDataset(corpus_dir=corpus, query_file=qfile).load() == []
     unreviewed = CorpusClaimOfficialUnreviewedGenQDataset(corpus_dir=corpus, query_file=qfile).load()
-    assert [c.claim_id for c in unreviewed] == ["A1"]
+    assert [(c.claim_id, c.context_query, c.metadata["query_source"]) for c in unreviewed] == [
+        ("A2", "Was the claim changed?", "generated")
+    ]
+    neutral = _queries(tmp_path / "n.json", [
+        {"item_id": "A1", "context_query": "How much did the rate rise in 2020?",
+         "original_sha256": _h("Rate rose to 3% in 2020.")},
+    ])
+    assert [c.claim_id for c in CorpusClaimOfficialGenQDataset(corpus_dir=corpus, query_file=neutral).load()] == ["A1"]
 
 
 def test_genq_skips_missing_query_and_stale_hash(corpus: Path, tmp_path: Path) -> None:

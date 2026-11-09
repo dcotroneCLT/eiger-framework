@@ -66,6 +66,10 @@ What this module does NOT do
 # ─── Built-in dataset classes ────────────────────────────────────────────────
 from eiger.datasets.averitec import AVeriTecDataset
 from eiger.datasets.corpus_claim import CorpusClaimDataset
+from eiger.datasets.corpus_claim_engineering import (
+    CorpusClaimEngineeringDataset,
+    CorpusClaimEngineeringGenQDataset,
+)
 from eiger.datasets.corpus_claim_official import (
     CorpusClaimOfficialDataset,
     CorpusClaimOfficialGenQDataset,
@@ -95,6 +99,8 @@ register_dataset(CorpusClaimOfficialDataset)
 register_dataset(CorpusClaimOfficialUnreviewedDataset)
 register_dataset(CorpusClaimOfficialGenQDataset)
 register_dataset(CorpusClaimOfficialUnreviewedGenQDataset)
+register_dataset(CorpusClaimEngineeringDataset)
+register_dataset(CorpusClaimEngineeringGenQDataset)
 
 # ─── Public API declaration ───────────────────────────────────────────────────
 
@@ -114,4 +120,6 @@ __all__ = [
     "CorpusClaimOfficialUnreviewedDataset",
     "CorpusClaimOfficialGenQDataset",
     "CorpusClaimOfficialUnreviewedGenQDataset",
+    "CorpusClaimEngineeringDataset",
+    "CorpusClaimEngineeringGenQDataset",
 ]

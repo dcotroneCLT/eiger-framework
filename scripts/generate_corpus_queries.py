@@ -62,7 +62,12 @@ from eiger.datasets.corpus_claim_official import (  # noqa: E402
     CorpusClaimOfficialUnreviewedDataset,
     load_modified_index,
 )
-from eiger.utils.query_leak import leak_tokens, tokens  # noqa: E402,F401
+from eiger.datasets.corpus_claim_engineering import (  # noqa: E402
+    CorpusClaimEngineeringDataset,
+    load_engineering_variant_index,
+    DEFAULT_ENGINEERING_FILE,
+)
+from eiger.utils.query_leak import leak_tokens, numeric_leak_tokens, tokens  # noqa: E402,F401
 
 # v1 is identical to scripts/enrich_snopes_claims.py::_QUESTION_PROMPT_TEMPLATE.
 PROMPTS = {
@@ -120,10 +125,20 @@ def build_entry(
     }
 
 
-def candidate_items(corpus_dir: Path) -> list[dict[str, str]]:
-    """Every row the official datasets can use, in the datasets' own order."""
-    claims = CorpusClaimOfficialUnreviewedDataset(corpus_dir=corpus_dir).load()
-    modified = load_modified_index(corpus_dir)
+def candidate_items(corpus_dir: Path, source: str = "official") -> list[dict[str, str]]:
+    """
+    Every row the datasets of ``source`` can use, in the datasets' own order.
+
+    The two corpora share claim ids and original texts, so one query file
+    serves both: generating with ``source="engineering"`` after ``official``
+    only adds the claims the larger corpus has in addition.
+    """
+    if source == "engineering":
+        claims = CorpusClaimEngineeringDataset(path=DEFAULT_ENGINEERING_FILE).load()
+        modified = load_engineering_variant_index(DEFAULT_ENGINEERING_FILE)
+    else:
+        claims = CorpusClaimOfficialUnreviewedDataset(corpus_dir=corpus_dir).load()
+        modified = load_modified_index(corpus_dir)
     return [
         {
             "item_id": c.claim_id,
@@ -253,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-o", "--output", type=Path, default=DEFAULT_QUERY_FILE)
     parser.add_argument("--prompt-version", choices=sorted(PROMPTS), default=DEFAULT_PROMPT_VERSION)
+    parser.add_argument("--source", choices=["official", "engineering"], default="official",
+                        help="corpus whose claims get a query (engineering = larger, superset)")
     parser.add_argument("--corpus-dir", type=Path, default=DEFAULT_CORPUS_DIR)
     parser.add_argument("--limit", type=int, default=None, help="generate at most N new queries")
     parser.add_argument("--checkpoint-every", type=int, default=25)
@@ -263,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-generate", action="store_true", help="only export the sample")
     args = parser.parse_args(argv)
 
-    items = candidate_items(args.corpus_dir)
+    items = candidate_items(args.corpus_dir, args.source)
     if args.no_generate:
         entries = json.loads(args.output.read_text(encoding="utf-8"))
     else:
@@ -282,7 +299,12 @@ def main(argv: list[str] | None = None) -> int:
                            args.limit, args.checkpoint_every, args.prompt_version)
 
     n_leak = sum(1 for e in entries if e["leaks_truth_tokens"] or e["leaks_poison_tokens"])
-    print(f"{len(entries)} queries in {args.output}; {n_leak} flagged as leaking a changed token")
+    n_num = sum(
+        1 for e in entries
+        if any(t[0].isdigit() for t in e["leaks_truth_tokens"] + e["leaks_poison_tokens"])
+    )
+    print(f"{len(entries)} queries in {args.output}; {n_leak} repeat a changed word, "
+          f"{n_num} repeat a changed number or year (only these are excluded from experiments)")
     print(f"sha256: {hashlib.sha256(args.output.read_bytes()).hexdigest()}")
 
     if args.sample:

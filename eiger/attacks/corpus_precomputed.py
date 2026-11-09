@@ -27,6 +27,12 @@ claim, or when the modified row's ``claim_original_reference`` does not equal
 the ground-truth text. Either case means the poisoned document could not be
 traced back to its source, which the ethics protocol forbids.
 
+Variant source
+---------------
+``params: {variant_source: official}`` (default) reads
+``corpus_claim_official/Modified_Claims`` (manually curated). ``engineering``
+reads ``corpus_claim/rag_claims_engineering.csv`` (Mistral-only, larger).
+
 ERS
 ----
 The corpus has per-row plausibility/editorial-risk columns, but they are
@@ -50,6 +56,10 @@ from typing import Any
 from eiger.core.exceptions import IngestionError
 from eiger.core.interfaces import BaseAttack
 from eiger.core.models import Document, PoisonedDocument
+from eiger.datasets.corpus_claim_engineering import (
+    DEFAULT_ENGINEERING_FILE,
+    load_engineering_variant_index,
+)
 from eiger.datasets.corpus_claim_official import DEFAULT_CORPUS_DIR, load_modified_index
 
 _FORBIDDEN_CATEGORIES = frozenset({"M03", "M05"})
@@ -58,6 +68,11 @@ _FORBIDDEN_CATEGORIES = frozenset({"M03", "M05"})
 @lru_cache(maxsize=4)
 def _cached_index(corpus_dir: str) -> dict[str, dict[str, str]]:
     return load_modified_index(Path(corpus_dir))
+
+
+@lru_cache(maxsize=4)
+def _cached_engineering_index(path: str) -> dict[str, dict[str, str]]:
+    return load_engineering_variant_index(Path(path))
 
 
 class CorpusPrecomputedAttack(BaseAttack):
@@ -71,11 +86,20 @@ class CorpusPrecomputedAttack(BaseAttack):
     excluded_from_benchmark: bool = False
 
     def apply(self, document: Document, seed: int, **kwargs: Any) -> PoisonedDocument:
-        corpus_dir = str(Path(kwargs.get("corpus_dir") or DEFAULT_CORPUS_DIR).resolve())
-        row = _cached_index(corpus_dir).get(document.claim_id)
+        variant_source = kwargs.get("variant_source", "official")
+        if variant_source == "official":
+            location = str(Path(kwargs.get("corpus_dir") or DEFAULT_CORPUS_DIR).resolve())
+            row = _cached_index(location).get(document.claim_id)
+        elif variant_source == "engineering":
+            location = str(Path(kwargs.get("engineering_file") or DEFAULT_ENGINEERING_FILE).resolve())
+            row = _cached_engineering_index(location).get(document.claim_id)
+        else:
+            raise IngestionError(
+                f"Unknown variant_source '{variant_source}' (expected 'official' or 'engineering')."
+            )
         if row is None:
             raise IngestionError(
-                f"No manipulated variant for claim '{document.claim_id}' in {corpus_dir}."
+                f"No manipulated variant for claim '{document.claim_id}' in {location}."
             )
         if row.get("claim_original_reference") != document.text:
             raise IngestionError(
@@ -100,6 +124,7 @@ class CorpusPrecomputedAttack(BaseAttack):
                 "changed_element": row.get("changed_element", ""),
                 "human_review_status": row.get("human_review_status", ""),
                 "no_op": row["claim_text"] == document.text,
+                "variant_source": variant_source,
             },
             original_text=document.text,
             annotation=None,

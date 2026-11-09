@@ -57,9 +57,10 @@ variants instead read neutral questions generated once by
 ``corpus_claim_official/derived/``. Each entry records the SHA-256 of the
 claim text it was generated from; an entry whose hash no longer matches the
 claim is not used. The leak check is recomputed here, against the
-manipulated variant actually used: a question that repeats a token differing
-between the original and the manipulated claim is skipped, because it would
-favour one of the two documents.
+manipulated variant actually used: a question that repeats a NUMBER or YEAR
+differing between the original and the manipulated claim is skipped, because
+it would favour one of the two documents. Word-level overlaps (typical of
+M06 context omission) are allowed; see eiger/utils/query_leak.py.
 
 Ordering and ``max_claims``
 ----------------------------
@@ -81,7 +82,7 @@ from eiger.core.exceptions import IngestionError
 from eiger.core.interfaces import BaseDataset
 from eiger.core.models import Claim
 from eiger.utils.logging import get_logger
-from eiger.utils.query_leak import leak_tokens
+from eiger.utils.query_leak import numeric_leak_tokens
 
 log = get_logger(__name__)
 
@@ -222,8 +223,8 @@ class CorpusClaimOfficialDataset(BaseDataset):
                 skip("no_generated_query")
             elif self.use_generated_queries and queries[item_id].get("original_sha256") != _sha(text):
                 skip("generated_query_for_different_text")
-            elif self.use_generated_queries and any(
-                leak_tokens(queries[item_id]["context_query"], text, modified[item_id]["claim_text"])
+            elif self.use_generated_queries and numeric_leak_tokens(
+                queries[item_id]["context_query"], text, modified[item_id]["claim_text"]
             ):
                 skip("generated_query_leaks_changed_tokens")
             else:
