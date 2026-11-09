@@ -45,5 +45,5 @@ data/
 clab-*/
 .venv-lock/
 logs/
-corpus_claim_official/derived/
+corpus_claim_official/derived/context_queries_v1.json
 review_queries_sample.xlsx

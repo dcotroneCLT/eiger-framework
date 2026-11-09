@@ -189,23 +189,35 @@ def _queries(path: Path, entries: list[dict]) -> Path:
     return path
 
 
-def test_genq_uses_generated_query_and_skips_missing_or_leaking(corpus: Path, tmp_path: Path) -> None:
+def _h(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_genq_uses_generated_query_and_applies_checks(corpus: Path, tmp_path: Path) -> None:
     qfile = _queries(tmp_path / "q.json", [
+        # Neutral: shares "2020" with both texts, repeats neither "3" nor "30".
         {"item_id": "A1", "context_query": "How much did the rate rise in 2020?",
-         "leaks_truth_tokens": [], "leaks_poison_tokens": []},
-        {"item_id": "A2", "context_query": "Leaky?", "leaks_truth_tokens": ["x"],
-         "leaks_poison_tokens": []},
+         "original_sha256": _h("Rate rose to 3% in 2020.")},
+        # Repeats "changed", present only in the manipulated text -> leak.
+        {"item_id": "A2", "context_query": "Was the claim changed?",
+         "original_sha256": _h("Unreviewed claim.")},
     ])
     reviewed = CorpusClaimOfficialGenQDataset(corpus_dir=corpus, query_file=qfile).load()
     assert [(c.claim_id, c.context_query, c.metadata["query_source"]) for c in reviewed] == [
         ("A1", "How much did the rate rise in 2020?", "generated")
     ]
-    # A2 leaks a changed token -> skipped even in the unreviewed variant.
     unreviewed = CorpusClaimOfficialUnreviewedGenQDataset(corpus_dir=corpus, query_file=qfile).load()
     assert [c.claim_id for c in unreviewed] == ["A1"]
-    # Without A1 in the file, the row is skipped as having no generated query.
+
+
+def test_genq_skips_missing_query_and_stale_hash(corpus: Path, tmp_path: Path) -> None:
     only_a2 = _queries(tmp_path / "q2.json", [{"item_id": "A2", "context_query": "q"}])
     assert CorpusClaimOfficialGenQDataset(corpus_dir=corpus, query_file=only_a2).load() == []
+    stale = _queries(tmp_path / "q3.json", [
+        {"item_id": "A1", "context_query": "What happened to the rate?", "original_sha256": "0" * 64}
+    ])
+    assert CorpusClaimOfficialGenQDataset(corpus_dir=corpus, query_file=stale).load() == []
 
 
 def test_template_variant_marks_query_source(corpus: Path) -> None:

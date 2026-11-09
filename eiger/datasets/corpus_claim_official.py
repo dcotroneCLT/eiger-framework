@@ -54,9 +54,12 @@ template contains the ground-truth text, which gives the true document an
 artificial rank-1 advantage (see docs/EXPERIMENTS.md §4.5). The ``*_genq``
 variants instead read neutral questions generated once by
 ``scripts/generate_corpus_queries.py`` and versioned in
-``corpus_claim_official/derived/``. Rows whose generated question repeats
-a token that differs between the original and the manipulated claim are
-skipped, because such a question would favour one of the two documents.
+``corpus_claim_official/derived/``. Each entry records the SHA-256 of the
+claim text it was generated from; an entry whose hash no longer matches the
+claim is not used. The leak check is recomputed here, against the
+manipulated variant actually used: a question that repeats a token differing
+between the original and the manipulated claim is skipped, because it would
+favour one of the two documents.
 
 Ordering and ``max_claims``
 ----------------------------
@@ -78,6 +81,7 @@ from eiger.core.exceptions import IngestionError
 from eiger.core.interfaces import BaseDataset
 from eiger.core.models import Claim
 from eiger.utils.logging import get_logger
+from eiger.utils.query_leak import leak_tokens
 
 log = get_logger(__name__)
 
@@ -87,7 +91,7 @@ DEFAULT_CORPUS_DIR = Path(__file__).resolve().parents[2] / "corpus_claim_officia
 _ORIGINAL_GLOB = "Original_Claims/Original_Corpus_*.csv"
 _MODIFIED_GLOB = "Modified_Claims/Modified_Corpus_*.csv"
 
-DEFAULT_QUERY_FILE = DEFAULT_CORPUS_DIR / "derived" / "context_queries_v1.json"
+DEFAULT_QUERY_FILE = DEFAULT_CORPUS_DIR / "derived" / "context_queries_v2.json"
 
 REVIEWED_STATUSES = frozenset({"kept_after_manual_audit", "approved_final_version"})
 
@@ -139,6 +143,10 @@ def load_query_index(path: Path) -> dict[str, dict[str, Any]]:
         )
     entries = json.loads(path.read_text(encoding="utf-8"))
     return {entry["item_id"]: entry for entry in entries}
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _parse_risk_level(raw: str | None) -> int | None:
@@ -212,8 +220,10 @@ class CorpusClaimOfficialDataset(BaseDataset):
                 skip("not_human_reviewed")
             elif self.use_generated_queries and item_id not in queries:
                 skip("no_generated_query")
-            elif self.use_generated_queries and (
-                queries[item_id].get("leaks_truth_tokens") or queries[item_id].get("leaks_poison_tokens")
+            elif self.use_generated_queries and queries[item_id].get("original_sha256") != _sha(text):
+                skip("generated_query_for_different_text")
+            elif self.use_generated_queries and any(
+                leak_tokens(queries[item_id]["context_query"], text, modified[item_id]["claim_text"])
             ):
                 skip("generated_query_leaks_changed_tokens")
             else:

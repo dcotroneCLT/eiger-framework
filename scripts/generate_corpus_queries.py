@@ -5,31 +5,38 @@ Why
 ---
 The default query for this corpus is the template "Is it true that <claim>?",
 which contains the ground-truth text and gives the true document an
-artificial rank-1 advantage (docs/EXPERIMENTS.md §4.5). This script asks the
-local LLM for one natural question per claim, with EXACTLY the prompt used for
-Snopes (scripts/enrich_snopes_claims.py), so the two experiments use the same
-query method.
+artificial rank-1 advantage (docs/EXPERIMENTS.md §4.5).
+
+Prompt versions
+---------------
+- v1: identical to the Snopes prompt (scripts/enrich_snopes_claims.py). With
+  it, about half of the questions repeated the true value (year, number,
+  omitted phrase), mostly as yes/no rephrasings of the claim.
+- v2 (default): agreed with the corpus author on 2026-11-04. A natural
+  rephrasing that does not contain the specific values that a manipulation
+  could change, and that does not assume the statement is true (some claims
+  are rated false, and every manipulated claim is inaccurate).
+
+Each entry records the prompt version and its SHA-256, the model, the Ollama
+version and the SHA-256 of the original and manipulated claim texts, so every
+query stays linked to the exact claim pair it was generated for.
 
 Leak check
 ----------
-A question must not favour either document. For each claim the script
-compares the original and the manipulated text and collects the tokens that
-differ (e.g. "50" vs "55", "2022" vs "2021"). If the question contains a token
-present only in the original, it leaks the truth; if it contains a token
-present only in the manipulated text, it leaks the poison. Both are recorded,
-and the ``*_genq`` datasets skip flagged rows.
+Recomputed by the ``*_genq`` datasets at load time (eiger/utils/query_leak.py)
+against the manipulated variant actually used; the flags stored here are
+informational.
 
 Run once, on one machine, then commit the output so every machine uses the
-same queries (generation depends on the model and Ollama version, which are
-recorded in every entry):
+same queries:
 
-    python scripts/generate_corpus_queries.py --limit 20 -o /tmp/pilot_queries.json
+    python scripts/generate_corpus_queries.py --limit 20 -o /tmp/pilot_v2.json
     python scripts/generate_corpus_queries.py
-    python scripts/generate_corpus_queries.py --sample 60 --sample-out review_queries_sample.xlsx
+    python scripts/generate_corpus_queries.py --no-generate --sample 60 --sample-out review_queries_v2.xlsx
 
-Output (default): corpus_claim_official/derived/context_queries_v1.json
+Output (default): corpus_claim_official/derived/context_queries_v2.json
 The file is resumable: existing item_ids are skipped and progress is saved
-every --checkpoint-every claims.
+every --checkpoint-every claims. Mixing prompt versions in one file is refused.
 """
 
 from __future__ import annotations
@@ -55,50 +62,60 @@ from eiger.datasets.corpus_claim_official import (  # noqa: E402
     CorpusClaimOfficialUnreviewedDataset,
     load_modified_index,
 )
+from eiger.utils.query_leak import leak_tokens, tokens  # noqa: E402,F401
 
-# Identical to scripts/enrich_snopes_claims.py::_QUESTION_PROMPT_TEMPLATE.
-# Keep them identical: the point is that both corpora use the same method.
-QUESTION_PROMPT_TEMPLATE = (
-    "You will be given a single verified factual statement. Write ONE natural "
-    "English question that this statement directly and fully answers. "
-    "Reply with ONLY the question, no preamble, no quotation marks, no numbering.\n\n"
-    "Statement: {claim}\n\n"
-    "Question:"
-)
-PROMPT_SHA256 = hashlib.sha256(QUESTION_PROMPT_TEMPLATE.encode("utf-8")).hexdigest()
+# v1 is identical to scripts/enrich_snopes_claims.py::_QUESTION_PROMPT_TEMPLATE.
+PROMPTS = {
+    "v1": (
+        "You will be given a single verified factual statement. Write ONE natural "
+        "English question that this statement directly and fully answers. "
+        "Reply with ONLY the question, no preamble, no quotation marks, no numbering.\n\n"
+        "Statement: {claim}\n\n"
+        "Question:"
+    ),
+    "v2": (
+        "You will be given a statement taken from a fact-checking archive. The statement "
+        "may be accurate or inaccurate. Write ONE natural English question that a "
+        "journalist would ask to find out what actually happened about the subject of "
+        "the statement. Rephrase in your own words instead of copying the statement. "
+        "Do not include any number, quantity, percentage, date or year mentioned in the "
+        "statement, and do not assume that the statement is true. "
+        "Reply with ONLY the question, no preamble, no quotation marks, no numbering.\n\n"
+        "Statement: {claim}\n\n"
+        "Question:"
+    ),
+}
+DEFAULT_PROMPT_VERSION = "v2"
+QUESTION_PROMPT_TEMPLATE = PROMPTS["v1"]
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[.,][0-9]+)?", re.IGNORECASE)
-_STOPWORDS = frozenset(
-    "a an the of in on at to for from by with and or but not no is are was were be been "
-    "it its this that these those as than then there their they he she his her we you i "
-    "has have had do does did will would can could may might should about into over".split()
-)
+
+def prompt_sha256(version: str) -> str:
+    return hashlib.sha256(PROMPTS[version].encode("utf-8")).hexdigest()
 
 
-def tokens(text: str) -> set[str]:
-    return {t.lower() for t in _TOKEN_RE.findall(text)} - _STOPWORDS
-
-
-def leak_tokens(question: str, original: str, modified: str) -> tuple[list[str], list[str]]:
-    """Return (truth-only tokens, poison-only tokens) that appear in the question."""
-    q, o, m = tokens(question), tokens(original), tokens(modified)
-    return sorted(q & (o - m)), sorted(q & (m - o))
+PROMPT_SHA256 = prompt_sha256("v1")
 
 
 def clean_question(raw: str) -> str:
     return raw.strip().strip('"').strip("'").strip()
 
 
-def build_entry(item: dict[str, str], question: str, model: str, ollama_version: str) -> dict[str, Any]:
+def build_entry(
+    item: dict[str, str], question: str, model: str, ollama_version: str, version: str = "v1"
+) -> dict[str, Any]:
     truth, poison = leak_tokens(question, item["original"], item["modified"])
     return {
         "item_id": item["item_id"],
         "context_query": question,
+        "manipulation_category": item.get("category", ""),
+        "original_sha256": hashlib.sha256(item["original"].encode("utf-8")).hexdigest(),
+        "modified_sha256": hashlib.sha256(item["modified"].encode("utf-8")).hexdigest(),
         "leaks_truth_tokens": truth,
         "leaks_poison_tokens": poison,
+        "prompt_version": version,
+        "prompt_sha256": prompt_sha256(version),
         "model": model,
         "ollama_version": ollama_version,
-        "prompt_sha256": PROMPT_SHA256,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
@@ -135,18 +152,25 @@ def generate(
     ollama_version: str,
     limit: int | None,
     checkpoint_every: int,
+    version: str = "v1",
 ) -> list[dict[str, Any]]:
     existing: list[dict[str, Any]] = (
         json.loads(output.read_text(encoding="utf-8")) if output.is_file() else []
     )
+    other = {e.get("prompt_version", "v1") for e in existing} - {version}
+    if other:
+        raise SystemExit(
+            f"{output} already contains queries from prompt {sorted(other)}; "
+            f"write prompt {version} to a different file."
+        )
     done = {e["item_id"] for e in existing}
     todo = [it for it in items if it["item_id"] not in done]
     if limit is not None:
         todo = todo[:limit]
     for i, item in enumerate(todo, start=1):
-        prompt = QUESTION_PROMPT_TEMPLATE.format(claim=item["original"])
+        prompt = PROMPTS[version].format(claim=item["original"])
         question = clean_question(llm.generate(prompt))
-        existing.append(build_entry(item, question, model, ollama_version))
+        existing.append(build_entry(item, question, model, ollama_version, version))
         if i % checkpoint_every == 0:
             _save(output, existing)
             print(f"  {i}/{len(todo)} generated")
@@ -184,9 +208,10 @@ def write_review_sheet(rows: list[dict[str, Any]], path: Path) -> None:
     ws.title = "revisione_query"
     header = [
         "item_id", "categoria", "piattaforma", "revisione_claim", "claim_originale",
-        "claim_manipolato", "elemento_modificato", "domanda_generata",
+        "claim_manipolato", "elemento_modificato", "domanda_generata", "versione_prompt",
         "token_vero_nella_domanda", "token_manipolato_nella_domanda",
-        "domanda_ok (si/no)", "problema (neutra? risponde al claim? lingua?)", "note",
+        "domanda_ok (si/no)", "presuppone_che_sia_vero (si/no)",
+        "problema (neutra? riformulata? riguarda il claim? lingua?)", "note",
     ]
     ws.append(header)
     for r in rows:
@@ -194,11 +219,12 @@ def write_review_sheet(rows: list[dict[str, Any]], path: Path) -> None:
         ws.append([
             r["item_id"], r["category"], r["platform"], r["review"], r["original"],
             r["modified"], r["changed_element"], e["context_query"],
-            ", ".join(e["leaks_truth_tokens"]), ", ".join(e["leaks_poison_tokens"]), "", "", "",
+            e.get("prompt_version", "v1"),
+            ", ".join(e["leaks_truth_tokens"]), ", ".join(e["leaks_poison_tokens"]), "", "", "", "",
         ])
     for cell in ws[1]:
         cell.font = Font(bold=True)
-    widths = [12, 9, 11, 22, 60, 60, 18, 50, 16, 16, 14, 30, 30]
+    widths = [12, 9, 11, 22, 60, 60, 18, 50, 9, 16, 16, 14, 16, 30, 30]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
     for row in ws.iter_rows(min_row=2):
@@ -209,10 +235,14 @@ def write_review_sheet(rows: list[dict[str, Any]], path: Path) -> None:
     info = wb.create_sheet("istruzioni")
     for line in [
         "Revisione delle domande generate per il corpus ufficiale.",
-        "Per ogni riga: la domanda è neutra (non contiene né il valore vero né quello manipolato)?",
-        "La domanda chiede proprio ciò che il claim afferma? È in inglese corretto?",
-        "Compilare 'domanda_ok' con si/no e, se no, descrivere il problema.",
-        f"Prompt (SHA-256): {PROMPT_SHA256}",
+        "Ogni riga collega domanda, claim originale, claim manipolato e categoria (item_id).",
+        "1. La domanda è neutra? Non deve contenere né il valore vero né quello manipolato.",
+        "2. È una riformulazione naturale, non una copia del claim?",
+        "3. Riguarda proprio ciò che il claim afferma?",
+        "4. Presuppone che il claim sia vero? (non dovrebbe: alcuni claim sono falsi)",
+        "Compilare 'domanda_ok' e 'presuppone_che_sia_vero' con si/no; descrivere eventuali problemi.",
+        *[f"Prompt {v} (SHA-256): {prompt_sha256(v)}"
+          for v in sorted({r["entry"].get("prompt_version", "v1") for r in rows})],
     ]:
         info.append([line])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,6 +252,7 @@ def write_review_sheet(rows: list[dict[str, Any]], path: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-o", "--output", type=Path, default=DEFAULT_QUERY_FILE)
+    parser.add_argument("--prompt-version", choices=sorted(PROMPTS), default=DEFAULT_PROMPT_VERSION)
     parser.add_argument("--corpus-dir", type=Path, default=DEFAULT_CORPUS_DIR)
     parser.add_argument("--limit", type=int, default=None, help="generate at most N new queries")
     parser.add_argument("--checkpoint-every", type=int, default=25)
@@ -246,8 +277,9 @@ def main(argv: list[str] | None = None) -> int:
         llm = OllamaLLM(model_name=args.model, host=settings.ollama_host,
                         port=settings.ollama_port, temperature=0.0, max_tokens=64)
         print(f"{len(items)} candidate claims; model {args.model}, Ollama {version}")
+        print(f"prompt {args.prompt_version}")
         entries = generate(items, args.output, llm, args.model, version,
-                           args.limit, args.checkpoint_every)
+                           args.limit, args.checkpoint_every, args.prompt_version)
 
     n_leak = sum(1 for e in entries if e["leaks_truth_tokens"] or e["leaks_poison_tokens"])
     print(f"{len(entries)} queries in {args.output}; {n_leak} flagged as leaking a changed token")
