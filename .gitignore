@@ -27,12 +27,10 @@ coverage.xml
 *.key
 *.pem
 authorized_keys
-
 # IDE
 .DS_Store
 .idea/
 .vscode/
-
 # Data & storage
 chroma_data/
 ollama_data/
@@ -43,6 +41,9 @@ results/
 # and scripts/README.md for how each dataset under data/<name>/ is
 # produced and where the raw source files live.
 data/
-
 # ContainerLab runtime artifacts (never commit these)
 clab-*/
+.venv-lock/
+logs/
+corpus_claim_official/derived/context_queries_v1.json
+review_queries_sample.xlsx

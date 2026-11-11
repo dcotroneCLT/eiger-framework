@@ -66,6 +66,16 @@ What this module does NOT do
 # ─── Built-in dataset classes ────────────────────────────────────────────────
 from eiger.datasets.averitec import AVeriTecDataset
 from eiger.datasets.corpus_claim import CorpusClaimDataset
+from eiger.datasets.corpus_claim_engineering import (
+    CorpusClaimEngineeringDataset,
+    CorpusClaimEngineeringGenQDataset,
+)
+from eiger.datasets.corpus_claim_official import (
+    CorpusClaimOfficialDataset,
+    CorpusClaimOfficialGenQDataset,
+    CorpusClaimOfficialUnreviewedDataset,
+    CorpusClaimOfficialUnreviewedGenQDataset,
+)
 from eiger.datasets.factcheck import FactCheckDataset
 from eiger.datasets.json_fixture import JSONFixtureDataset
 from eiger.datasets.politifact import PolitiFactDataset
@@ -85,6 +95,12 @@ register_dataset(AVeriTecDataset)
 register_dataset(PolitiFactDataset)
 register_dataset(FactCheckDataset)
 register_dataset(CorpusClaimDataset)
+register_dataset(CorpusClaimOfficialDataset)
+register_dataset(CorpusClaimOfficialUnreviewedDataset)
+register_dataset(CorpusClaimOfficialGenQDataset)
+register_dataset(CorpusClaimOfficialUnreviewedGenQDataset)
+register_dataset(CorpusClaimEngineeringDataset)
+register_dataset(CorpusClaimEngineeringGenQDataset)
 
 # ─── Public API declaration ───────────────────────────────────────────────────
 
@@ -100,4 +116,10 @@ __all__ = [
     "PolitiFactDataset",
     "FactCheckDataset",
     "CorpusClaimDataset",
+    "CorpusClaimOfficialDataset",
+    "CorpusClaimOfficialUnreviewedDataset",
+    "CorpusClaimOfficialGenQDataset",
+    "CorpusClaimOfficialUnreviewedGenQDataset",
+    "CorpusClaimEngineeringDataset",
+    "CorpusClaimEngineeringGenQDataset",
 ]

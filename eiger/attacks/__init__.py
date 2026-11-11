@@ -31,6 +31,7 @@ from eiger.attacks.temporal import DateManipulationAttack
 from eiger.attacks.causal import CausalManipulationAttack
 from eiger.attacks.cherry_picking import CherryPickingAttack
 from eiger.attacks.missing_context import MissingContextAttack
+from eiger.attacks.corpus_precomputed import CorpusPrecomputedAttack
 
 # ─── Auto-registration ───────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ register_attack(DateManipulationAttack)
 register_attack(CausalManipulationAttack)
 register_attack(CherryPickingAttack)
 register_attack(MissingContextAttack)
+register_attack(CorpusPrecomputedAttack)
 
 # ─── Public API declaration ───────────────────────────────────────────────────
 
@@ -63,4 +65,5 @@ __all__ = [
     "CausalManipulationAttack",
     "CherryPickingAttack",
     "MissingContextAttack",
+    "CorpusPrecomputedAttack",
 ]

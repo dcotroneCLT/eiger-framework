@@ -21,6 +21,9 @@ log = get_logger(__name__)
 class CorpusBuilderResult:
     ground_truth_docs: list[Document] = field(default_factory=list)
     poisoned_docs: list[PoisonedDocument] = field(default_factory=list)
+    # Attack applications whose output was identical to the ground truth,
+    # per attack name. They are NOT added to the corpus (see build()).
+    skipped_noop: dict[str, int] = field(default_factory=dict)
 
     @property
     def all_documents(self) -> list[Document]:
@@ -125,6 +128,26 @@ class CorpusBuilder:
                 if rng.random() <= attack_cfg.poison_rate:
                     doc_seed = derive_seed(self.seed, claim.claim_id, attack.name, "apply")
                     poisoned = attack.apply(gt_doc, seed=doc_seed, **attack_cfg.params)
+                    # Bug fix (November 2026 review): an attack that finds
+                    # nothing to change (e.g. numerical_shift on a claim with
+                    # no digits) returns the ground-truth text unchanged. Such a
+                    # "poisoned" document is not a manipulation: counting it
+                    # inflated PRR/PRD, and its exact score tie with the ground
+                    # truth made rank order (and PRD@1) non-deterministic.
+                    # Skip it and count it, so the effective manipulation rate
+                    # is visible in the logs.
+                    if poisoned.text.strip() == gt_doc.text.strip():
+                        result.skipped_noop[attack.name] = result.skipped_noop.get(attack.name, 0) + 1
+                        continue
+                    # Bug fix (November 2026 review): attacks copy the source
+                    # document's doc_id, so a poisoned document and its ground
+                    # truth shared the same id. HybridRetriever fuses rankings
+                    # by doc_id and therefore merged the two, silently hiding
+                    # the poisoned document (PRR under-counted for hybrid).
+                    # Give every poisoned document a unique, deterministic id.
+                    poisoned = poisoned.model_copy(
+                        update={"doc_id": f"{gt_doc.doc_id}__{attack.name}"}
+                    )
                     result.poisoned_docs.append(poisoned)
 
         log.info(
@@ -132,5 +155,6 @@ class CorpusBuilder:
             n_ground_truth=len(result.ground_truth_docs),
             n_poisoned=len(result.poisoned_docs),
             poison_ratio=f"{result.poison_ratio:.2%}",
+            skipped_noop=result.skipped_noop,
         )
         return result

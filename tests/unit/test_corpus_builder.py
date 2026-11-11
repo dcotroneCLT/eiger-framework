@@ -324,7 +324,10 @@ class TestNonBenchmarkAttackGating:
             attacks=[(attack, cfg)], seed=42, allow_non_benchmark_attacks=True
         )
         result = builder.build(two_claims)
-        assert len(result.poisoned_docs) == len(two_claims)
+        # C2 mentions NASA and is poisoned; C1 has no mapped entity, so the
+        # attack is a no-op there and is skipped (review fix), not added.
+        assert [d.claim_id for d in result.poisoned_docs] == ["C2"]
+        assert result.skipped_noop == {"attribution_switch": 1}
 
     def test_mixed_gated_and_ordinary_attacks_still_raises(self) -> None:
         from eiger.attacks.attribution import AttributionSwitchAttack

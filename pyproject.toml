@@ -13,7 +13,7 @@ authors = [{ name = "EIGER Research Team" }]
 
 dependencies = [
     # Vector store
-    "qdrant-client>=1.9.0,<2.0",
+    "qdrant-client>=1.9.0,<1.10.0",
     # Embeddings
     "sentence-transformers>=3.0.0,<4.0",
     # NLI for Source Integrity metric (lazily imported — see
@@ -32,6 +32,9 @@ dependencies = [
     "structlog>=24.1.0",
     # Numerics
     "numpy>=1.26.0,<2.0",
+    # pyarrow: 26.x requires numpy 2; 25.0.1 is the newest version
+    # verified to import with numpy 1.26.4 (see ENVIRONMENT.md).
+    "pyarrow==25.0.1",
     # CLI experiment config parsing (was only a transitive dependency
     # until Sprint 3's eiger/__main__.py started importing it directly)
     "PyYAML>=6.0,<7.0",

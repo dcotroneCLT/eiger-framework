@@ -304,7 +304,9 @@ class TestRunCorpusBuilding:
             attacks=[AttackConfig(name="attribution_switch", poison_rate=1.0)],
             allow_non_benchmark_attacks=True,
         )
-        runner.run([_make_claim()], save=False)
+        # The claim must mention a mapped entity, otherwise attribution_switch
+        # is a no-op and the poisoned copy is skipped by CorpusBuilder.
+        runner.run([_make_claim(text="The WHO reported inflation rose to 3.5% in 2023.")], save=False)
         args, _ = mock_vector_store.upsert.call_args
         # 1 ground-truth + 1 poisoned.
         assert len(args[1]) == 2
@@ -470,6 +472,8 @@ class TestRunRetrievalAndGeneration:
         assert record.generation.model_name == "mock-llm"
         assert record.generation.metadata["temperature"] == runner.config.llm.temperature
         assert record.generation.metadata["max_tokens"] == runner.config.llm.max_tokens
+        # Source Integrity reads the claim text from here (review fix).
+        assert record.generation.metadata["ground_truth"] == claim.original_fact
 
     def test_one_record_per_claim(self, tmp_path: Path) -> None:
         runner, _, _, _ = _make_runner(tmp_path)

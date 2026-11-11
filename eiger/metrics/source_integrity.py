@@ -7,9 +7,24 @@ SI measures the factual integrity of retrieved documents relative to ground trut
 
 Implementation uses Natural Language Inference (NLI) via a cross-encoder model
 to assess entailment/contradiction between each retrieved document and the
-ground-truth fact. The NLI model produces a probability that the document text
-is *consistent* with the claim; these probabilities are averaged across all
-retrieved documents for a given query.
+ground-truth fact. For each retrieved document d and the claim's ground-truth
+text g, the cross-encoder scores the pair (premise=d, hypothesis=g) and the
+softmax probability of the ENTAILMENT label is taken:
+
+    SI = mean over retrieved documents d of P(entailment | d, g)
+
+Bug fix (November 2026 review). The previous implementation had two errors
+that made SI uninterpretable:
+  1. Ground truth was the retrieval *query*, not the claim. On Snopes the
+     query is a generated question, so documents were compared with a
+     question; on the official corpus it is "Is it true that ...?".
+  2. It used the zero-shot-classification pipeline with the labels
+     "consistent"/"contradictory". That softmaxes the entailment logit of two
+     templated hypotheses against each other, so an unrelated document scored
+     about 0.5 instead of near 0, and the value was not P(entailment).
+The ground truth is now ``claim.original_fact``, stored by ExperimentRunner
+in ``generation.metadata["ground_truth"]``; the score is the model's own
+ENTAILMENT probability, looked up by label name, not by index.
 
 NLI model used: cross-encoder/nli-MiniLM2-L6-H768 (MIT license)
 This is a lightweight model that runs on CPU without GPU requirements.
@@ -37,12 +52,11 @@ from eiger.utils.logging import get_logger
 log = get_logger(__name__)
 
 # ─── NLI model constants ──────────────────────────────────────────────────────
-# Label indices correspond to the output order of the cross-encoder model.
-# These are defined as module-level constants rather than magic numbers so that
-# a future model switch only requires updating them in one place.
-_CONTRADICTION_IDX = 0
-_ENTAILMENT_IDX = 1
-_NEUTRAL_IDX = 2
+# The entailment probability is looked up by label NAME in the model's own
+# output (config.id2label), never by a hard-coded index: label order differs
+# between NLI models, and a wrong index would silently report contradiction
+# or neutral probabilities as entailment.
+_ENTAILMENT_LABEL_PREFIX = "entail"
 
 # Default model name; can be overridden at instantiation time for experiments
 # that require a larger/different NLI backbone.
@@ -121,7 +135,7 @@ class SourceIntegrityMetric(BaseMetric):
 
             log.info("source_integrity.loading_nli_model", model=self.model_name)
             self._pipeline = hf_pipeline(
-                "zero-shot-classification",
+                "text-classification",
                 model=self.model_name,
                 device=-1,  # -1 = CPU; change to 0 for the first CUDA device
             )
@@ -184,24 +198,9 @@ class SourceIntegrityMetric(BaseMetric):
             return MetricScore(metric_name=self.name, value=0.0)
 
         # ─── Run NLI inference per document ──────────────────────────────
-        entailment_scores: list[float] = []
-        for doc_text in retrieved_texts:
-            result = self._pipeline(
-                doc_text,
-                # Two-class zero-shot classification: consistent vs contradictory.
-                # The neutral case is implicitly absorbed by the softmax.
-                candidate_labels=["consistent", "contradictory"],
-                hypothesis_template=(
-                    "This text is {} with the following claim: " + ground_truth
-                ),
-            )
-            # Convert the label-score lists into a lookup dict for safe access.
-            label_scores = dict(zip(result["labels"], result["scores"]))
-            # Use 0.5 as the fallback (neutral / uncertain) when the key is missing.
-            entailment_scores.append(label_scores.get("consistent", 0.5))
-
-        # ─── Aggregate and return ─────────────────────────────────────────
-        # Simple mean: treats all retrieved documents equally regardless of rank.
+        entailment_scores = [
+            self._entailment_probability(doc_text, ground_truth) for doc_text in retrieved_texts
+        ]
         si = sum(entailment_scores) / len(entailment_scores)
 
         return MetricScore(
@@ -217,29 +216,50 @@ class SourceIntegrityMetric(BaseMetric):
 
     # ─── Static helpers ───────────────────────────────────────────────────────
 
+    def _entailment_probability(self, premise: str, hypothesis: str) -> float:
+        """
+        Return P(entailment | premise, hypothesis) from the NLI cross-encoder.
+
+        The text-classification pipeline is called on the sentence pair with
+        ``top_k=None`` so it returns the softmax over ALL labels; the
+        entailment score is then found by label name.
+
+        Raises:
+            ValueError: If the model output has no entailment label (wrong
+                        model type), rather than silently returning a score.
+        """
+        result = self._pipeline({"text": premise, "text_pair": hypothesis}, top_k=None)
+        # Depending on the transformers version a single pair returns either a
+        # flat list of {label, score} dicts or a one-element list of lists.
+        if result and isinstance(result[0], list):
+            result = result[0]
+        for item in result:
+            if str(item["label"]).lower().startswith(_ENTAILMENT_LABEL_PREFIX):
+                return float(item["score"])
+        labels = [item["label"] for item in result]
+        raise ValueError(
+            f"NLI model '{self.model_name}' returned no entailment label (got {labels}); "
+            "SourceIntegrityMetric needs a 3-way NLI cross-encoder."
+        )
+
     @staticmethod
     def _get_ground_truth(record: EvaluationRecord) -> str | None:
         """
-        Extract ground-truth text from the evaluation record.
+        Return the claim's ground-truth text for this record.
 
-        Ground truth is expected to be stored in the retrieval result metadata
-        or derivable from the claim. This method is a placeholder for Sprint 4
-        when the full dataset integration is complete.
-
-        Current approximation: returns the retrieval query string, which
-        approximates the factual claim being evaluated. This is intentionally
-        imprecise and will be replaced by the actual claim text once the
-        dataset loader stores it in ``RetrievalResult``.
+        ExperimentRunner stores ``claim.original_fact`` in
+        ``generation.metadata["ground_truth"]``. The retrieval query is NOT a
+        valid substitute (see the module docstring), so a record without it
+        yields None and compute() returns 0.0 with a warning.
 
         Args:
             record: The evaluation record to inspect.
 
         Returns:
-            The ground-truth text string, or ``None`` if unavailable.
+            The ground-truth text, or ``None`` if unavailable.
         """
-        # Will be populated when the full dataset loader is integrated.
-        # For now: return query as a proxy (claim question approximates the fact).
-        return record.retrieval.query or None
+        value = record.generation.metadata.get("ground_truth")
+        return value if isinstance(value, str) and value else None
 
     # ─── Aggregation ──────────────────────────────────────────────────────────
 
