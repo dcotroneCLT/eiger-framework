@@ -68,12 +68,15 @@ from eiger.datasets.averitec import AVeriTecDataset
 from eiger.datasets.corpus_claim import CorpusClaimDataset
 from eiger.datasets.corpus_claim_engineering import (
     CorpusClaimEngineeringDataset,
+    CorpusClaimEngineeringExtraGenQDataset,
+    CorpusClaimEngineeringGenQAllDataset,
     CorpusClaimEngineeringGenQDataset,
 )
 from eiger.datasets.corpus_claim_official import (
     CorpusClaimOfficialDataset,
     CorpusClaimOfficialGenQDataset,
     CorpusClaimOfficialUnreviewedDataset,
+    CorpusClaimOfficialUnreviewedGenQAllDataset,
     CorpusClaimOfficialUnreviewedGenQDataset,
 )
 from eiger.datasets.factcheck import FactCheckDataset
@@ -101,6 +104,9 @@ register_dataset(CorpusClaimOfficialGenQDataset)
 register_dataset(CorpusClaimOfficialUnreviewedGenQDataset)
 register_dataset(CorpusClaimEngineeringDataset)
 register_dataset(CorpusClaimEngineeringGenQDataset)
+register_dataset(CorpusClaimOfficialUnreviewedGenQAllDataset)
+register_dataset(CorpusClaimEngineeringGenQAllDataset)
+register_dataset(CorpusClaimEngineeringExtraGenQDataset)
 
 # ─── Public API declaration ───────────────────────────────────────────────────
 
@@ -122,4 +128,7 @@ __all__ = [
     "CorpusClaimOfficialUnreviewedGenQDataset",
     "CorpusClaimEngineeringDataset",
     "CorpusClaimEngineeringGenQDataset",
+    "CorpusClaimOfficialUnreviewedGenQAllDataset",
+    "CorpusClaimEngineeringGenQAllDataset",
+    "CorpusClaimEngineeringExtraGenQDataset",
 ]

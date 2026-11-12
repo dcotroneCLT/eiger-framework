@@ -233,3 +233,22 @@ def test_template_variant_marks_query_source(corpus: Path) -> None:
 def test_missing_query_file_raises(tmp_path: Path) -> None:
     with pytest.raises(IngestionError, match="generate_corpus_queries"):
         load_query_index(tmp_path / "absent.json")
+
+
+def test_genq_all_keeps_numeric_leaks_and_flags_them(corpus: Path, tmp_path: Path) -> None:
+    from eiger.datasets.corpus_claim_official import CorpusClaimOfficialUnreviewedGenQAllDataset
+
+    qfile = _queries(tmp_path / "q.json", [
+        {"item_id": "A1", "context_query": "Did the rate rise to 3% in 2020?",
+         "original_sha256": _h("Rate rose to 3% in 2020.")},
+        {"item_id": "A2", "context_query": "What happened to the claim?",
+         "original_sha256": _h("Unreviewed claim.")},
+    ])
+    claims = {c.claim_id: c for c in CorpusClaimOfficialUnreviewedGenQAllDataset(
+        corpus_dir=corpus, query_file=qfile).load()}
+    assert claims["A1"].metadata["query_numeric_leak"] is True     # repeats the changed "3"
+    assert claims["A2"].metadata["query_numeric_leak"] is False
+    # The default (excluding) variant drops A1; the template variant has no flag value.
+    assert [c.claim_id for c in CorpusClaimOfficialUnreviewedGenQDataset(
+        corpus_dir=corpus, query_file=qfile).load()] == ["A2"]
+    assert CorpusClaimOfficialDataset(corpus_dir=corpus).load()[0].metadata["query_numeric_leak"] is None

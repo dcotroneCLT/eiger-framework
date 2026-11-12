@@ -169,6 +169,10 @@ class CorpusClaimOfficialDataset(BaseDataset):
     )
     include_unreviewed: bool = False
     use_generated_queries: bool = False
+    # Sensitivity analysis: keep queries that repeat a changed number or year.
+    # Every claim then carries metadata['query_numeric_leak'] so results can be
+    # stratified by it (scripts/analyze_query_leak_sensitivity.py).
+    keep_numeric_leaks: bool = False
 
     def __init__(
         self, corpus_dir: str | Path | None = None, query_file: str | Path | None = None
@@ -223,13 +227,18 @@ class CorpusClaimOfficialDataset(BaseDataset):
                 skip("no_generated_query")
             elif self.use_generated_queries and queries[item_id].get("original_sha256") != _sha(text):
                 skip("generated_query_for_different_text")
-            elif self.use_generated_queries and numeric_leak_tokens(
+            elif self.use_generated_queries and not self.keep_numeric_leaks and numeric_leak_tokens(
                 queries[item_id]["context_query"], text, modified[item_id]["claim_text"]
             ):
                 skip("generated_query_leaks_changed_tokens")
             else:
                 query = queries[item_id]["context_query"] if self.use_generated_queries else None
-                claims.append(self._to_claim(row, modified[item_id], query))
+                leak = (
+                    bool(numeric_leak_tokens(query, text, modified[item_id]["claim_text"]))
+                    if query is not None
+                    else None
+                )
+                claims.append(self._to_claim(row, modified[item_id], query, leak))
 
         claims.sort(key=lambda c: hashlib.sha256(c.claim_id.encode("utf-8")).hexdigest())
         if max_claims is not None:
@@ -253,7 +262,11 @@ class CorpusClaimOfficialDataset(BaseDataset):
         return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
 
     def _to_claim(
-        self, row: dict[str, str], modified_row: dict[str, str], query: str | None = None
+        self,
+        row: dict[str, str],
+        modified_row: dict[str, str],
+        query: str | None = None,
+        leak: bool | None = None,
     ) -> Claim:
         text = row["claim_text"]
         sensitivity = row.get("sensitivity_class")
@@ -262,6 +275,7 @@ class CorpusClaimOfficialDataset(BaseDataset):
         metadata["corpus_dir"] = str(self.corpus_dir)
         metadata["requires_human_review"] = row.get("human_review_status") not in REVIEWED_STATUSES
         metadata["query_source"] = "generated" if query is not None else "template"
+        metadata["query_numeric_leak"] = leak
         return Claim(
             claim_id=row["item_id"],
             original_fact=text,
@@ -307,3 +321,20 @@ class CorpusClaimOfficialUnreviewedGenQDataset(CorpusClaimOfficialDataset):
     )
     include_unreviewed: bool = True
     use_generated_queries: bool = True
+
+
+class CorpusClaimOfficialUnreviewedGenQAllDataset(CorpusClaimOfficialDataset):
+    """
+    Sensitivity analysis: like ``corpus_claim_official_unreviewed_genq`` but
+    KEEPING queries that repeat a changed number or year. Compare with the
+    excluding variant, or stratify by ``metadata['query_numeric_leak']``.
+    """
+
+    name: str = "corpus_claim_official_unreviewed_genq_all"
+    description: str = (
+        "ENGINEERING ONLY: official corpus, generated queries, numeric-leak rows "
+        "kept (flagged in metadata). Results are preliminary."
+    )
+    include_unreviewed: bool = True
+    use_generated_queries: bool = True
+    keep_numeric_leaks: bool = True

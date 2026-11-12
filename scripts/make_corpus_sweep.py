@@ -42,7 +42,15 @@ DATASETS = {
     ("official", "genq", True): "corpus_claim_official_genq",
     ("engineering", "template", False): "corpus_claim_engineering",
     ("engineering", "genq", False): "corpus_claim_engineering_genq",
+    # Sensitivity analysis: keep queries that repeat a changed number or year.
+    ("official", "genq_all", False): "corpus_claim_official_unreviewed_genq_all",
+    ("engineering", "genq_all", False): "corpus_claim_engineering_genq_all",
+    # Independent replication: claims that are only in the larger corpus.
+    ("engineering_extra", "genq", False): "corpus_claim_engineering_extra_genq",
 }
+
+# Which corpus file the corpus_precomputed attack reads its manipulations from.
+VARIANT_SOURCE = {"official": "official", "engineering": "engineering", "engineering_extra": "engineering"}
 
 
 def sweep_name(corpus: str, queries: str, reviewed_only: bool) -> str:
@@ -62,7 +70,7 @@ def build_config(
     tag = f"{rate_pct}pct_seed{seed}"
     attacks = (
         [{"name": "corpus_precomputed", "poison_rate": rate_pct / 100,
-          "params": {"variant_source": corpus}}]
+          "params": {"variant_source": VARIANT_SOURCE[corpus]}}]
         if rate_pct > 0 else []
     )
     return {
@@ -100,14 +108,19 @@ def main() -> int:
     parser.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44, 45, 46])
     parser.add_argument("--max-claims", type=int, default=300)
     parser.add_argument("--reviewed-only", action="store_true")
-    parser.add_argument("--corpus", choices=["official", "engineering"], default="official")
-    parser.add_argument("--queries", choices=["template", "genq"], default="template",
-                        help="template 'Is it true that ...?' or neutral generated queries (v2)")
+    parser.add_argument("--corpus", choices=["official", "engineering", "engineering_extra"],
+                        default="official",
+                        help="engineering_extra = claims only in the larger corpus (disjoint from official)")
+    parser.add_argument("--queries", choices=["template", "genq", "genq_all"], default="template",
+                        help="template 'Is it true that ...?'; genq = neutral generated queries (v2, "
+                             "numeric-leak rows excluded); genq_all = same, leak rows kept (sensitivity)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    if args.corpus == "engineering" and args.reviewed_only:
-        parser.error("the engineering corpus has no human-reviewed rows")
+    if args.corpus != "official" and args.reviewed_only:
+        parser.error("only the official corpus has human-reviewed rows")
+    if (args.corpus, args.queries, args.reviewed_only) not in DATASETS:
+        parser.error(f"combination not available: corpus={args.corpus}, queries={args.queries}")
     out_dir = REPO / "experiments" / sweep_name(args.corpus, args.queries, args.reviewed_only)
     planned = [
         (out_dir / f"{rate}pct_seed{seed}.yaml",

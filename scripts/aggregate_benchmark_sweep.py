@@ -79,6 +79,50 @@ def bootstrap_ci(values: list[float], n_boot: int, rng: random.Random) -> tuple[
     return lo, hi
 
 
+def claim_seed_matrices(by_seed: dict[int, dict]):
+    """
+    Per metric, a (seeds x claims) matrix of per-record values, using the claims
+    present in every seed. Returns None if records carry no claim_id.
+    """
+    import numpy as np
+
+    per_seed: list[dict[str, dict[str, float]]] = []
+    for seed in sorted(by_seed):
+        values: dict[str, dict[str, float]] = {}
+        for rec in by_seed[seed].get("records", []):
+            if rec.get("claim_id") is None:
+                return None
+            values[rec["claim_id"]] = per_record_values(rec)
+        per_seed.append(values)
+    common = set.intersection(*(set(v) for v in per_seed)) if per_seed else set()
+    if not common:
+        return None
+    ids = sorted(common)
+    return {k: np.array([[v[c][k] for c in ids] for v in per_seed]) for k in RESULT_METRICS}
+
+
+def two_way_bootstrap(matrix, n_boot: int, rng) -> tuple[float, float]:
+    """
+    95% percentile interval for the mean of a (seeds x claims) matrix, resampling
+    SEEDS and CLAIMS independently (pigeonhole bootstrap for crossed factors).
+
+    Why: per-record values are not independent. The same claims appear in every
+    seed (claim-level dependence), and within one seed the records share one
+    corpus, so a claim's exposure depends on which neighbours were poisoned
+    (run-level dependence). Resampling both factors keeps both sources of
+    variability; resampling records treats neither.
+    """
+    import numpy as np
+
+    n_seeds, n_claims = matrix.shape
+    means = np.empty(n_boot)
+    for b in range(n_boot):
+        seeds = rng.integers(0, n_seeds, n_seeds)
+        claims = rng.integers(0, n_claims, n_claims)
+        means[b] = matrix[np.ix_(seeds, claims)].mean()
+    return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--n-boot", type=int, default=10000)
@@ -88,6 +132,9 @@ def main() -> int:
     parser.add_argument("--title", default="Poison-rate sweep, benchmark attacks only (M01, M02, M04, M06)")
     args = parser.parse_args()
     rng = random.Random(args.boot_seed)
+    import numpy as np
+
+    np_rng = np.random.default_rng(args.boot_seed)
     results_dir = REPO / args.results_dir
 
     runs: dict[int, dict[int, dict]] = defaultdict(dict)
@@ -128,9 +175,17 @@ def main() -> int:
             row[f"{k}_sd"] = statistics.stdev(per_seed) if len(per_seed) > 1 else 0.0
         for k in DECOMPOSITION:
             row[f"{k}_mean"] = statistics.fmean(pooled[k]) if pooled[k] else float("nan")
+        matrices = claim_seed_matrices(by_seed)
+        if matrices is None:
+            print(f"WARNING: rate {rate}%: records without claim_id; claim x seed interval not computed.")
         for k in RESULT_METRICS:
             lo, hi = bootstrap_ci(pooled[k], args.n_boot, rng)
             row[f"{k}_ci_lo"], row[f"{k}_ci_hi"] = lo, hi
+            lo2, hi2 = (
+                two_way_bootstrap(matrices[k], args.n_boot, np_rng)
+                if matrices is not None else (float("nan"), float("nan"))
+            )
+            row[f"{k}_ci2_lo"], row[f"{k}_ci2_hi"] = lo2, hi2
             # The CI uses per-record values; they must reproduce the stored
             # aggregate, otherwise the record-level reading of results.json is wrong.
             pooled_mean = statistics.fmean(pooled[k]) if pooled[k] else float("nan")
@@ -149,17 +204,23 @@ def main() -> int:
         f"# {args.title}",
         "",
         f"Seeds per rate: {rows[0]['seeds']}. Git commit(s): {', '.join(sorted(map(str, commits)))}. "
-        f"Bootstrap: {args.n_boot} resamples of per-record values pooled across seeds, seed {args.boot_seed}.",
+        f"Bootstrap: {args.n_boot} resamples, seed {args.boot_seed}.",
         "",
         "## Results (retrieval level)",
         "",
-        "| Rate | PRR mean ± sd | PRR 95% CI | PRD@1 mean ± sd | PRD@1 95% CI | Records |",
-        "|---|---|---|---|---|---|",
+        "IC (records) treats every record as independent. IC (claims x seeds) resamples claims and seeds "
+        "independently, so it accounts for the same claims appearing in every seed and for the shared corpus "
+        "within a run; it is the one to report.",
+        "",
+        "| Rate | PRR mean ± sd | PRR IC (records) | PRR IC (claims x seeds) | PRD@1 mean ± sd | PRD@1 IC (records) | PRD@1 IC (claims x seeds) | Records |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
             f"| {r['rate_pct']}% | {r['prr_mean']:.3f} ± {r['prr_sd']:.3f} | [{r['prr_ci_lo']:.3f}, {r['prr_ci_hi']:.3f}] "
-            f"| {r['prd_mean']:.3f} ± {r['prd_sd']:.3f} | [{r['prd_ci_lo']:.3f}, {r['prd_ci_hi']:.3f}] | {r['n_records']} |"
+            f"| [{r['prr_ci2_lo']:.3f}, {r['prr_ci2_hi']:.3f}] "
+            f"| {r['prd_mean']:.3f} ± {r['prd_sd']:.3f} | [{r['prd_ci_lo']:.3f}, {r['prd_ci_hi']:.3f}] "
+            f"| [{r['prd_ci2_lo']:.3f}, {r['prd_ci2_hi']:.3f}] | {r['n_records']} |"
         )
     lines += [
         "",

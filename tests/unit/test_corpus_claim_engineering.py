@@ -124,3 +124,40 @@ def test_real_engineering_corpus_builds() -> None:
         name="corpus_precomputed", poison_rate=1.0, params={"variant_source": "engineering"}))])
     result = builder.build(claims)
     assert len(result.poisoned_docs) == 40 and result.skipped_noop == {}
+
+
+def test_genq_all_and_extra_variants(csv_path: Path, tmp_path: Path) -> None:
+    from eiger.datasets.corpus_claim_engineering import (
+        CorpusClaimEngineeringExtraGenQDataset,
+        CorpusClaimEngineeringGenQAllDataset,
+    )
+
+    # E1 is a normal row; N1 repeats a changed year in its query.
+    path = tmp_path / "e.csv"
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerow(_row("E1", "Heat caused the cattle deaths in 2022.", "The cattle deaths caused heat in 2022."))
+        writer.writerow(_row("N1", "It happened in 2020.", "It happened in 2021.", manipulation_category="M02"))
+        writer.writerow(_row("X1", "Storms hit the coast in March.", "Storms hit the coast in April.", manipulation_category="M02"))
+    sha = lambda t: hashlib.sha256(t.encode()).hexdigest()  # noqa: E731
+    q = tmp_path / "q.json"
+    q.write_text(json.dumps([
+        {"item_id": "E1", "context_query": "What caused the cattle deaths?", "original_sha256": sha("Heat caused the cattle deaths in 2022.")},
+        {"item_id": "N1", "context_query": "Did it happen in 2020?", "original_sha256": sha("It happened in 2020.")},
+        {"item_id": "X1", "context_query": "What happened on the coast?", "original_sha256": sha("Storms hit the coast in March.")},
+    ]))
+    keep = {c.claim_id: c for c in CorpusClaimEngineeringGenQAllDataset(path=path, query_file=q).load()}
+    assert set(keep) == {"E1", "N1", "X1"}
+    assert keep["N1"].metadata["query_numeric_leak"] is True and keep["E1"].metadata["query_numeric_leak"] is False
+    assert {c.claim_id for c in CorpusClaimEngineeringGenQDataset(path=path, query_file=q).load()} == {"E1", "X1"}
+
+    # Extra = claims not in the official corpus: put E1 in a fake official corpus.
+    official = tmp_path / "official" / "Original_Claims"
+    official.mkdir(parents=True)
+    (official / "Original_Corpus_01.csv").write_text("item_id\nE1\n", encoding="utf-8")
+    extra = CorpusClaimEngineeringExtraGenQDataset(
+        path=path, query_file=q, official_corpus_dir=tmp_path / "official")
+    # E1 is in the (fake) official corpus, N1 repeats a changed year: only X1 is left.
+    assert [c.claim_id for c in extra.load()] == ["X1"]
+    assert extra.name == "corpus_claim_engineering_extra_genq"
