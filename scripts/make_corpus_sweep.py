@@ -53,20 +53,25 @@ DATASETS = {
 VARIANT_SOURCE = {"official": "official", "engineering": "engineering", "engineering_extra": "engineering"}
 
 
-def sweep_name(corpus: str, queries: str, reviewed_only: bool) -> str:
+RETRIEVERS = ("dense", "sparse", "hybrid")
+
+
+def sweep_name(corpus: str, queries: str, reviewed_only: bool, retriever: str = "dense") -> str:
     kind = "reviewed" if reviewed_only else "preliminary"
-    # Keep the original folder name for the first official/template sweep.
-    if corpus == "official" and queries == "template":
-        return f"corpus_sweep_{kind}"
-    return f"corpus_sweep_{corpus}_{queries}_{kind}"
+    # Dense sweeps keep their original folder names, so existing results stay valid.
+    if retriever == "dense":
+        if corpus == "official" and queries == "template":
+            return f"corpus_sweep_{kind}"
+        return f"corpus_sweep_{corpus}_{queries}_{kind}"
+    return f"corpus_sweep_{corpus}_{queries}_{retriever}_{kind}"
 
 
 def build_config(
     rate_pct: int, seed: int, max_claims: int, reviewed_only: bool,
-    corpus: str = "official", queries: str = "template",
+    corpus: str = "official", queries: str = "template", retriever: str = "dense",
 ) -> dict:
     kind = "reviewed" if reviewed_only else "preliminary"
-    name = sweep_name(corpus, queries, reviewed_only)
+    name = sweep_name(corpus, queries, reviewed_only, retriever)
     tag = f"{rate_pct}pct_seed{seed}"
     attacks = (
         [{"name": "corpus_precomputed", "poison_rate": rate_pct / 100,
@@ -76,7 +81,7 @@ def build_config(
     return {
         "experiment_id": f"{name}_{tag}",
         "description": (
-            f"{corpus} corpus sweep ({kind}, {queries} queries), rate={rate_pct}%, seed={seed}, "
+            f"{corpus} corpus sweep ({kind}, {queries} queries, {retriever} retrieval), rate={rate_pct}%, seed={seed}, "
             "collaborator's precomputed manipulations (M01/M02/M04/M06)."
             + ("" if reviewed_only else " PRELIMINARY: corpus not yet human-validated.")
         ),
@@ -90,7 +95,7 @@ def build_config(
         "allow_non_benchmark_attacks": False,
         "attacks": attacks,
         "retriever": {
-            "type": "dense",
+            "type": retriever,
             "embedder": "sentence-transformers/all-MiniLM-L6-v2",
             "vector_store": "qdrant",
             "top_k": 5,
@@ -108,6 +113,8 @@ def main() -> int:
     parser.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44, 45, 46])
     parser.add_argument("--max-claims", type=int, default=300)
     parser.add_argument("--reviewed-only", action="store_true")
+    parser.add_argument("--retriever", choices=RETRIEVERS, default="dense",
+                        help="retrieval method; sparse = BM25, hybrid = dense + BM25 fused with RRF")
     parser.add_argument("--corpus", choices=["official", "engineering", "engineering_extra"],
                         default="official",
                         help="engineering_extra = claims only in the larger corpus (disjoint from official)")
@@ -121,10 +128,10 @@ def main() -> int:
         parser.error("only the official corpus has human-reviewed rows")
     if (args.corpus, args.queries, args.reviewed_only) not in DATASETS:
         parser.error(f"combination not available: corpus={args.corpus}, queries={args.queries}")
-    out_dir = REPO / "experiments" / sweep_name(args.corpus, args.queries, args.reviewed_only)
+    out_dir = REPO / "experiments" / sweep_name(args.corpus, args.queries, args.reviewed_only, args.retriever)
     planned = [
         (out_dir / f"{rate}pct_seed{seed}.yaml",
-         build_config(rate, seed, args.max_claims, args.reviewed_only, args.corpus, args.queries))
+         build_config(rate, seed, args.max_claims, args.reviewed_only, args.corpus, args.queries, args.retriever))
         for rate in RATES
         for seed in args.seeds
     ]
