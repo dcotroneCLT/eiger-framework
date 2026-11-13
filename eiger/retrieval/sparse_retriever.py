@@ -69,6 +69,8 @@ What this module does NOT do:
 
 from __future__ import annotations
 
+import hashlib
+
 import re
 from typing import TYPE_CHECKING
 
@@ -94,6 +96,11 @@ _TOKEN_PATTERN = re.compile(r"\w+")
 def _tokenize(text: str) -> list[str]:
     """Lowercase and split text into word tokens."""
     return _TOKEN_PATTERN.findall(text.lower())
+
+
+def _tie_break(doc_id: str) -> int:
+    """Neutral, deterministic tie-break value for documents with equal BM25 scores."""
+    return int(hashlib.sha256(doc_id.encode("utf-8")).hexdigest()[:16], 16)
 
 
 class SparseRetriever(BaseRetriever):
@@ -191,7 +198,17 @@ class SparseRetriever(BaseRetriever):
         except Exception as exc:  # noqa: BLE001 - re-raised as a domain error
             raise RetrievalError(f"BM25 scoring failed for claim '{claim_id}': {exc}") from exc
 
-        ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        # Bug fix (November 2026 review): ties used to be resolved by index order
+        # (a stable sort), and CorpusBuilder indexes every ground-truth document
+        # BEFORE its poisoned copy. When a query does not contain the token that
+        # the manipulation changed, the two documents score exactly the same, so
+        # the ground truth always won the tie and PRD@1 for BM25 was ~0 by
+        # construction. Ties are now broken by a hash of the doc_id: deterministic
+        # and identical on every machine, but independent of document type.
+        ranked_indices = sorted(
+            range(len(scores)),
+            key=lambda i: (-float(scores[i]), _tie_break(self._documents[i].doc_id)),
+        )[:top_k]
         max_score = max((float(scores[i]) for i in ranked_indices), default=0.0)
 
         hits = [

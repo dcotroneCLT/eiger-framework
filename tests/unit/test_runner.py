@@ -366,7 +366,16 @@ class TestRunSparseRetriever:
             context_query="What happened to inflation?",
             source_dataset="test_fixture",
         )
-        runner.run([claim_a, claim_b], save=False)
+        # A third, unrelated document is needed: with only two documents the BM25
+        # IDF of a term present in one of them is 0, both score 0, and the winner
+        # was decided by index order (the bug fixed in the November 2026 review).
+        claim_c = Claim(
+            claim_id="C",
+            original_fact="Heavy rain flooded several streets in the northern district.",
+            context_query="What happened to inflation?",
+            source_dataset="test_fixture",
+        )
+        runner.run([claim_a, claim_b, claim_c], save=False)
         for call in mock_llm.build_rag_prompt.call_args_list:
             _, context_docs = call.args
             assert context_docs == [
@@ -420,7 +429,16 @@ class TestRunHybridRetriever:
             context_query="What happened to inflation?",
             source_dataset="test_fixture",
         )
-        runner.run([claim_a, claim_b], save=False)
+        # A third, unrelated document is needed: with only two documents the BM25
+        # IDF of a term present in one of them is 0, both score 0, and the winner
+        # was decided by index order (the bug fixed in the November 2026 review).
+        claim_c = Claim(
+            claim_id="C",
+            original_fact="Heavy rain flooded several streets in the northern district.",
+            context_query="What happened to inflation?",
+            source_dataset="test_fixture",
+        )
+        runner.run([claim_a, claim_b, claim_c], save=False)
         for call in mock_llm.build_rag_prompt.call_args_list:
             _, context_docs = call.args
             assert context_docs == [

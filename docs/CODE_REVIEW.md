@@ -12,6 +12,7 @@ Stato dopo le correzioni: **803 test unitari superati, copertura 100%**. Lo stat
 | 2 | Documento avvelenato e ground-truth hanno lo stesso `doc_id`; il retriever ibrido li fonde e nasconde il veleno | Critica (solo ibrido) | PRR sottostimato con `retriever.type: hybrid`; nessun effetto sugli sweep densi | Corretto |
 | 3 | Il codice del corpus ufficiale e degli sweep relativi non è nel repository | Critica (provenienza) | I `results.json` del corpus ufficiale riportano un commit che non contiene il codice che li ha prodotti | Da committare |
 | 3b | Attacchi senza effetto (testo identico all'originale) contati come documenti avvelenati | Critica (Snopes) | Al 10%, seed 42: 19 documenti "avvelenati" su 38 identici all'originale; PRR e PRD di Snopes sovrastimati e PRD@1 non deterministico (parità di punteggio) | Corretto |
+| 3c | BM25: parità di punteggio risolte con l'ordine di indicizzazione, il documento vero vince sempre | Critica (BM25) | PRD@1 di BM25 ~0 per costruzione; PRR essenzialmente invariato | Corretto |
 | 4 | FFR = 0 garantito dalla costruzione dello scorer proxy | Alta | FFR non misura nulla con lo scorer `embedding` | Documentato |
 | 5 | FFR non è condizionato all'esposizione al veleno | Media | FFR mescola risposte con e senza contesto avvelenato | Da decidere |
 | 6 | ERS è una media condizionata ai soli record con annotazioni | Media | ERS non è confrontabile tra tassi diversi | Documentato |
@@ -67,6 +68,16 @@ Conseguenze: PRR e PRD di Snopes sovrastimati; e, poiché una copia identica ha 
 
 **Correzione.** `CorpusBuilder` scarta le uscite identiche al documento vero e le conta in `skipped_noop`, riportato nei log. Il tasso effettivo di manipolazione è quindi quello dei documenti realmente modificati. Test di regressione in `tests/unit/test_review_fixes.py`.
 
+### 2.5 Il retriever BM25 risolveva le parità di punteggio con l'ordine di indicizzazione
+
+`SparseRetriever` ordinava i documenti con un ordinamento stabile: a parità di punteggio vince il documento indicizzato per primo. `CorpusBuilder` indicizza tutti i documenti veri **prima** delle loro copie avvelenate. Quando la query non contiene il termine cambiato dalla manipolazione (una cifra, un anno), documento vero e documento avvelenato hanno esattamente lo stesso punteggio BM25, e vinceva sempre il vero.
+
+Verificato con un caso minimo: con l'ordine di indicizzazione invertito, vinceva l'avvelenato. Conseguenza: **il PRD@1 di BM25 (0.002 su Snopes) era quasi zero per costruzione**, non per robustezza. Nei risultati reali, su 83 record con la variante propria nel top-5, la variante era al primo posto una sola volta.
+
+**Correzione.** Le parità sono risolte con un hash del `doc_id` (SHA-256): deterministico e identico su ogni macchina, ma indipendente dal tipo di documento. Due test di regressione: l'esito non dipende dall'ordine di indicizzazione, e su 200 coppie in parità il vero vince tra il 35% e il 65% dei casi. Due test esistenti usavano un corpus di due documenti, dove l'IDF di BM25 è 0 e la vittoria dipendeva dalla parità: ora hanno un terzo documento.
+
+Effetti: il PRD@1 degli sweep BM25 va rifatto. Il retriever ibrido è toccato in pratica solo in casi rari: a parità del lato lessicale, la fusione RRF ricade sull'ordine del lato denso. Il PRR di BM25 cambia al più ai bordi del top-5.
+
 ## 3. Problemi sulle metriche
 
 ### 3.1 FFR = 0 per costruzione con lo scorer proxy
@@ -120,3 +131,4 @@ Atteso: valore alto (> 0.8) per il claim stesso, basso per la versione con l'ann
 | Source Integrity — tutti | Sì | Bug 2.1 |
 | FFR — tutti | Non significativo | Proxy (3.1) |
 | Qualunque risultato con `hybrid` | Sì | Bug 2.2 (nessuno ancora prodotto) |
+| PRD@1 degli sweep `sparse` | Sì | Bug 2.5 |
