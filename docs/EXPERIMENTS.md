@@ -160,6 +160,43 @@ Tre osservazioni.
 
 Il risultato utilizzabile di questo esperimento non è il valore di PRR, ma la scomposizione: la manipolazione viene quasi sempre recuperata insieme alla verità, e il contesto dato al modello contiene quindi una contraddizione. È lo scenario in cui misurare FFR ha più senso.
 
+## 4.7 Confronto dei tre retriever con query v2 (corpus ufficiale, 10%)
+
+Tutti e tre con il commit `4690d28` (correzione del pareggio BM25), stesse 300 claim, stesse query v2, stessi documenti avvelenati. Il denso è stato eseguito su Mac-116 (sweep del 3 novembre, rigenerato dopo la revisione); BM25 su Mac-Susy; ibrido su Mac-116.
+
+| Retriever | PRR | IC (claims × seed) | PRD@1 | IC (claims × seed) | Variante propria nel top-5 | Solo varianti di altri claim |
+|---|---|---|---|---|---|---|
+| Denso | 0.333 | [0.300, 0.367] | 0.041 | [0.026, 0.059] | 0.095 | 0.239 |
+| BM25 | 0.312 | [0.276, 0.349] | 0.043 | [0.027, 0.061] | 0.087 | 0.225 |
+| Ibrido | 0.297 | [0.262, 0.333] | 0.039 | [0.025, 0.055] | 0.094 | 0.203 |
+
+Lettura.
+
+- Con query neutre, i tre retriever danno lo stesso primo posto al documento avvelenato (PRD@1 0.039–0.043, intervalli sovrapposti).
+- Nessun retriever protegge il claim attaccato: la variante propria entra nel top-5 con probabilità 0.087–0.095 in tutti e tre, coerente con il tasso di claim avvelenati.
+- La differenza sul PRR è piccola e riguarda solo la parte collaterale (0.203–0.239): l'ibrido ne riduce un po' l'ampiezza, il BM25 è nel mezzo.
+
+Confronto con Snopes. Su Snopes, con query a template, PRD@1 era 0.046 (denso) e 0.002 (BM25, prima della correzione del pareggio). Il valore di BM25 su Snopes era azzerato dal bug, non dal retriever: con query neutre, sul corpus ufficiale, il BM25 raggiunge 0.043. La differenza grande tra Snopes e corpus ufficiale dipende dalla formulazione della query, non dal metodo di recupero.
+
+Limiti: il confronto a tre è solo sul 10%. Per la curva dei tassi serve lo sweep completo di ciascun retriever. Il confronto tra retriever è su claim gli stessi e query identiche, quindi le differenze sono più affidabili delle stime assolute.
+
+## 4.8 Stato delle misure di sensibilità e difesa (4 novembre -> 13 novembre 2026)
+
+Obiettivo: misurare quanto il sistema dipende da un contesto manipolato e se una difesa semplice lo riduce. Le manipolazioni restano quelle già nel corpus, revisionate dove possibile; non se ne generano di nuove.
+
+| Misura | Cosa risponde | Stato | Cosa serve |
+|---|---|---|---|
+| 1. PCS (sensibilità della risposta al contesto avvelenato) | La risposta cambia quando si rimuovono i documenti avvelenati? | Implementata nel runner (generazione controfattuale). Non ancora eseguita sul corpus con query v2. | Rilanciare lo sweep al 10% con `pcs` tra le metriche. Il costo è circa il doppio per run. PCS è un proxy a similarità di embedding: si riporta come "PCS (embedding-similarity proxy)". |
+| 2. Calibrazione di FFR e Source Integrity | Le metriche automatiche correlano con il giudizio umano? | Strumenti pronti (`sample_for_faithfulness_calibration.py`, `compute_calibration_correlation.py`). Nessuna annotazione raccolta. | Un annotatore con codebook, circa 40-60 record, più un secondo annotatore su una parte del campione per misurare l'accordo. Chi annota è ancora da decidere. |
+| 3. Audit di contraddizione (difesa) | Una coppia di documenti in contraddizione nel top-5 segnala la manipolazione? | Da implementare. Non richiede generazioni: usa il modello NLI sui risultati già prodotti. | Script `contradiction_audit.py`. Soglia da calibrare sui record a 0% (falsi allarmi). L'audit non usa il testo del claim come riferimento, perché in un sistema reale il vero non è noto. |
+
+Decisioni aperte prima di implementare la misura 3:
+- definizione di contraddizione: probabilità NLI di contraddizione sopra soglia (punto di partenza 0.5, da calibrare);
+- trattamento delle coppie: si considerano solo documenti con lo stesso claim_id, e si escludono le coppie non varianti, per evitare un segnale banale;
+- chi decide le soglie e i criteri di validazione: la collega e il gruppo.
+
+Stato dei risultati al 13 novembre 2026: corpus ufficiale con query v2, retriever densi (curva completa, Mac-116); BM25 solo al 10% (Mac-Susy, commit 4690d28; curva completa da rilanciare); ibrido completo su tutti i tassi (25 run, Mac-116, commit 4690d28, completate il 13 novembre; tabella completa da aggregare). Lo sweep ibrido su Snopes resta da rifare con il commit 4690d28, perché quello precedente è pre-correzione.
+
 ## 5. Limiti e interpretazione
 
 FFR è zero per una ragione strutturale. FFR conta una risposta come falsità fedele solo se la faithfulness supera 0.8 e la correttezza scende sotto 0.2. Lo scorer proxy confronta similarità di embedding, e una risposta sullo stesso argomento del fatto vero ottiene comunque una correttezza alta anche se contiene il falso. Serve uno scorer che verifichi l'implicazione.
